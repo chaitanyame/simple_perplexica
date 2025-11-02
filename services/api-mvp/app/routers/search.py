@@ -5,6 +5,7 @@ from ..models import SearchRequest, SearchResponse, Source, FocusMode, Optimizat
 from ..search_clients import searxng as searx_client
 from ..search_clients import serperdev as serper_client
 from ..providers import openrouter
+from ..utils.fetch_urls import fetch_and_process_urls
 import math
 from typing import List, Dict
 
@@ -132,13 +133,64 @@ async def search(req: SearchRequest):
     # Force search for all queries: prefer optimized query if provided
     effective_query = decision.optimized_query or req.query
     sources = []
-    # Seed with user-provided links if any
-    link_sources = [
-        {"title": url, "url": url, "pageContent": ""} for url in (decision.links or [])
-    ]
+
+    # Process user-provided or LLM-suggested links by fetching actual content
+    link_sources = []
+    if decision.links:
+        try:
+            link_docs = await fetch_and_process_urls(decision.links)
+            link_sources = [
+                {
+                    "title": doc.get("title", ""),
+                    "url": doc.get("url", ""),
+                    "pageContent": doc.get("pageContent", ""),
+                }
+                for doc in link_docs
+            ]
+        except Exception as e:
+            # Graceful fallback if URL fetching fails
+            link_sources = [
+                {"title": url, "url": url, "pageContent": f"Failed to fetch: {str(e)}"}
+                for url in decision.links
+            ]
+
     fetched = await get_sources(effective_query, req.focusMode)
     sources = link_sources + (fetched or [])
     # If no sources are available, proceed gracefully with empty sources.
+
+    # ENHANCEMENT: Optionally fetch full content from top search result URLs
+    # Only fetch if quality mode and we have sources from search engines
+    if req.optimizationMode == OptimizationMode.quality and fetched:
+        # Take top 3 URLs from fetched results to enrich with full content
+        top_urls = [s.get("url") for s in fetched[:3] if s.get("url")]
+        if top_urls:
+            try:
+                enriched_docs = await fetch_and_process_urls(
+                    top_urls, max_chunks_per_url=3
+                )
+                # Replace shallow snippets with enriched content for these URLs
+                url_to_enriched = {}
+                for doc in enriched_docs:
+                    url = doc.get("url")
+                    if url not in url_to_enriched:
+                        url_to_enriched[url] = []
+                    url_to_enriched[url].append(doc)
+
+                # Update sources with enriched content
+                enriched_sources = []
+                for s in sources:
+                    s_url = s.get("url")
+                    if s_url in url_to_enriched:
+                        # Replace with enriched chunks
+                        enriched_sources.extend(url_to_enriched[s_url])
+                        del url_to_enriched[s_url]  # avoid duplication
+                    else:
+                        enriched_sources.append(s)
+
+                sources = enriched_sources
+            except Exception:
+                # Silent fallback - use original sources if enrichment fails
+                pass
 
     # Rerank with embeddings if configured
     if sources:
