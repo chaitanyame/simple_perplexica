@@ -1,0 +1,100 @@
+openapi: 3.0.3
+info:
+  title: API-only MVP Web Search
+  version: 0.1.0
+servers:
+  - url: http://localhost:3001
+paths:
+  /api/providers:
+    get:
+      summary: List available providers and models
+      responses:
+        '200':
+          description: Providers and models
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  providers:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                        name:
+                          type: string
+                        chatModels:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              name: { type: string }
+                              key: { type: string }
+                        embeddingModels:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              name: { type: string }
+                              key: { type: string }
+  /api/search:
+    post:
+      summary: Perform a web search and get a synthesized answer with citations
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                chatModel:
+                  type: object
+                  properties:
+                    providerId: { type: string }
+                    key: { type: string }
+                embeddingModel:
+                  type: object
+                  properties:
+                    providerId: { type: string }
+                    key: { type: string }
+                optimizationMode:
+                  type: string
+                  enum: [speed, balanced]
+                focusMode:
+                  type: string
+                  enum: [webSearch, academicSearch, writingAssistant, wolframAlphaSearch, youtubeSearch, redditSearch]
+                query:
+                  type: string
+                history:
+                  type: array
+                  items:
+                    type: array
+                    items:
+                      type: string
+                systemInstructions:
+                  type: string
+                stream:
+                  type: boolean
+      responses:
+        '200':
+          description: Search result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  sources:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        title: { type: string }
+                        url: { type: string }
+                        pageContent: { type: string }
+        '400':
+          description: Validation error
+        '500':
+          description: Internal error

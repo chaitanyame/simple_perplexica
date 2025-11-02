@@ -39,3 +39,16 @@ db.sqlite
 /searxng
 
 certificates
+ 
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+pytest_cache/
+
+# Env files
+.env*

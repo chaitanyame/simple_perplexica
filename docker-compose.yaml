@@ -1,15 +1,57 @@
 services:
-  perplexica:
-    image: itzcrazykns1337/perplexica:latest
+  vetuku:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: chaitanyame/vetuku:latest
     ports:
-      - '3000:3000'
+      - '3010:3000'
     volumes:
       - data:/home/perplexica/data
       - uploads:/home/perplexica/uploads
     restart: unless-stopped
 
+  searxng:
+    image: searxng/searxng:latest
+    ports:
+      - '8080:8080'
+    volumes:
+      - ./searxng:/etc/searxng
+    environment:
+      - SEARXNG_SETTINGS_PATH=/etc/searxng/settings.yml
+    restart: unless-stopped
+
+  api-mvp:
+    build:
+      context: .
+      dockerfile: services/api-mvp/Dockerfile
+    environment:
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - OPENROUTER_MODEL=${OPENROUTER_MODEL:-deepseek/deepseek-chat-v3.1:free}
+      - OPENROUTER_BASE_URL=${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
+      - OPENROUTER_EMBEDDING_MODEL=${OPENROUTER_EMBEDDING_MODEL:-text-embedding-3-small}
+      - SEARXNG_URL=http://searxng:8080
+      - SERPERDEV_API_KEY=${SERPERDEV_API_KEY}
+    ports:
+      - '3001:3001'
+    depends_on:
+      - searxng
+    restart: unless-stopped
+
+  api-mvp-ui:
+    build:
+      context: .
+      dockerfile: services/api-mvp/tools/Dockerfile
+    environment:
+      - API_BASE_URL=http://api-mvp:3001
+    ports:
+      - '8501:8501'
+    depends_on:
+      - api-mvp
+    restart: unless-stopped
+
 volumes:
   data:
-    name: 'perplexica-data'
+    name: 'vetuku-data'
   uploads:
-    name: 'perplexica-uploads'
+    name: 'vetuku-uploads'

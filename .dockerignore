@@ -1,1 +1,17 @@
 **/node_modules
+.git
+.gitignore
+.vscode
+.idea
+**/__pycache__
+**/*.pyc
+**/.venv
+**/venv
+**/dist
+**/build
+**/.next
+**/coverage
+**/*.log*
+.env*
+Dockerfile*
+.dockerignore

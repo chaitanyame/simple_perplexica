@@ -1,0 +1,9 @@
+fastapi==0.115.5
+uvicorn[standard]==0.30.6
+httpx==0.28.1
+pydantic==2.10.4
+python-dotenv==1.0.1
+# Use slim distribution with only needed extras to avoid ag-ui/starlette conflicts
+pydantic-ai-slim[openai]==1.5.0
+# NLP for intelligent temporal intent detection
+spacy==3.8.2
