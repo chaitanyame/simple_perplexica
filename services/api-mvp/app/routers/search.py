@@ -1,4 +1,4 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 import json
 from ..models import SearchRequest, SearchResponse, Source, FocusMode, OptimizationMode
@@ -6,8 +6,13 @@ from ..search_clients import searxng as searx_client
 from ..search_clients import serperdev as serper_client
 from ..providers import openrouter
 from ..utils.fetch_urls import fetch_and_process_urls
+from ..logging_config import get_logger
+from ..middleware.rate_limit import limiter
 import math
 from typing import List, Dict
+import os
+
+logger = get_logger(__name__)
 
 router = APIRouter()
 
@@ -39,18 +44,45 @@ async def get_sources(query: str, focus_mode: FocusMode):
     """Fetch sources via SearxNG primary, SerperDev fallback - matching Perplexica."""
     cfg = FOCUS_MODE_ENGINES.get(focus_mode, {"searchWeb": True, "engines": []})
     # Always perform web search regardless of focusMode configuration
+
+    logger.info(
+        "Fetching sources",
+        extra={
+            "query": query,
+            "focus_mode": focus_mode.value,
+            "engines": cfg["engines"],
+        },
+    )
+
     try:
         results = await searx_client.search(
             query, engines=cfg["engines"], language="en"
         )
         if results:
+            logger.info(
+                "SearxNG search successful",
+                extra={"query": query, "result_count": len(results)},
+            )
             return results
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(
+            "SearxNG search failed, falling back to SerperDev",
+            extra={"query": query, "error": str(e)},
+        )
     # Fallback to SerperDev
     try:
-        return await serper_client.search(query)
-    except Exception:
+        results = await serper_client.search(query)
+        logger.info(
+            "SerperDev search successful",
+            extra={"query": query, "result_count": len(results)},
+        )
+        return results
+    except Exception as e:
+        logger.error(
+            "All search providers failed",
+            extra={"query": query, "error": str(e)},
+            exc_info=True,
+        )
         return []
 
 
@@ -75,6 +107,13 @@ async def rerank_sources(
     # Decide if we rerank
     defaults = RERANK_DEFAULTS.get(focus_mode, {"rerank": True, "threshold": 0.3})
     if not defaults["rerank"] or optimization == OptimizationMode.speed:
+        logger.debug(
+            "Skipping reranking",
+            extra={
+                "reason": "speed optimization or focus mode",
+                "source_count": len(sources),
+            },
+        )
         return sources
 
     # If speed optimization, still do light rerank like TS speed path: only embed query and use existing doc embeddings if available.
@@ -82,6 +121,16 @@ async def rerank_sources(
     try:
         if not sources:
             return sources
+
+        logger.info(
+            "Starting reranking",
+            extra={
+                "query": query,
+                "source_count": len(sources),
+                "threshold": defaults.get("threshold"),
+            },
+        )
+
         # Build texts to embed: query once, each source content (fallback to title)
         doc_texts = []
         for s in sources:
@@ -92,6 +141,9 @@ async def rerank_sources(
         inputs = [query] + doc_texts
         vectors = await openrouter.embed_texts(inputs, model=embedding_model_key)
         if not vectors or len(vectors) != len(inputs):
+            logger.warning(
+                "Embedding failed, returning original order", extra={"query": query}
+            )
             return sources
         qv = vectors[0]
         sims = []
@@ -106,22 +158,61 @@ async def rerank_sources(
             # if all are below threshold, just sort all by sim
             ranked = sims
         ranked.sort(key=lambda x: x["sim"], reverse=True)
+
+        logger.info(
+            "Reranking completed",
+            extra={
+                "query": query,
+                "original_count": len(sources),
+                "ranked_count": len(ranked),
+                "top_similarity": ranked[0]["sim"] if ranked else 0,
+            },
+        )
+
         return [sources[x["i"]] for x in ranked]
-    except Exception:
+    except Exception as e:
         # On any embedding error, return original order
+        logger.error(
+            "Reranking failed", extra={"query": query, "error": str(e)}, exc_info=True
+        )
         return sources
 
 
 @router.post("/search", response_model=SearchResponse)
-async def search(req: SearchRequest):
+@limiter.limit("10/minute")  # Rate limit: 10 requests per minute per IP
+async def search(req: SearchRequest, request: Request):
     # pydantic handles validation for query/focusMode
     # Focus mode engine settings are ignored since we force search for all queries
+
+    logger.info(
+        "Search request received",
+        extra={
+            "query": req.query,
+            "focus_mode": req.focusMode.value,
+            "optimization_mode": req.optimizationMode.value,
+            "chat_history_length": len(req.history) if req.history else 0,
+        },
+    )
+
     # Decide if search is needed and possibly rewrite the query
     try:
         decision = await openrouter.decide_search_and_rewrite(
             req.query, req.history, getattr(req.focusMode, "value", str(req.focusMode))
         )
-    except Exception:
+        logger.debug(
+            "Decision completed",
+            extra={
+                "need_search": decision.need_search,
+                "optimized_query": decision.optimized_query,
+                "links_count": len(decision.links) if decision.links else 0,
+            },
+        )
+    except Exception as e:
+        logger.warning(
+            "LLM decisioning failed, using fallback",
+            extra={"query": req.query, "error": str(e)},
+        )
+
         # Graceful fallback if LLM decisioning fails (e.g., rate limit)
         class _D:  # light shim to avoid import cycle
             need_search = True

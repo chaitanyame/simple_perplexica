@@ -4,6 +4,13 @@ from typing import List, Dict, Optional
 import logging
 import spacy
 from functools import lru_cache
+from tenacity import (
+    retry,
+    stop_after_attempt,
+    wait_exponential,
+    retry_if_exception_type,
+    before_sleep_log,
+)
 
 SEARXNG_URL = os.getenv("SEARXNG_URL", "http://searxng:8080")
 logger = logging.getLogger(__name__)
@@ -28,7 +35,7 @@ def _detect_recency_need(query: str) -> Optional[str]:
     temporal intent more intelligently than keyword matching.
 
     Returns:
-        'd' for day (today/yesterday), 'w' for week, 'm' for month, or None
+        'day' for today/yesterday, 'week' for this week, 'month' for this month, or None
     """
     if not query:
         return None
@@ -49,13 +56,13 @@ def _detect_recency_need(query: str) -> Optional[str]:
                 term in text_lower
                 for term in ["today", "yesterday", "tonight", "now", "just now"]
             ):
-                return "d"
+                return "day"
             # Week-level
             if any(term in text_lower for term in ["this week", "week", "weekly"]):
-                return "w"
+                return "week"
             # Month-level
             if any(term in text_lower for term in ["this month", "month", "monthly"]):
-                return "m"
+                return "month"
 
     # Check for temporal modifiers (adjectives that imply recency)
     temporal_adjectives = {
@@ -89,7 +96,7 @@ def _detect_recency_need(query: str) -> Optional[str]:
             related_words.add(token.head.text.lower())
 
             if related_words & news_context_words:
-                return "d"  # Latest news/breaking updates → day filter
+                return "day"  # Latest news/breaking updates → day filter
 
     return None
 
@@ -101,30 +108,40 @@ def _detect_recency_fallback(query: str) -> Optional[str]:
     # Day-level recency
     day_terms = ["today", "yesterday", "breaking", "just now", "tonight", "latest"]
     if any(term in ql for term in day_terms):
-        return "d"
+        return "day"
 
     # Week-level recency
     week_terms = ["this week", "past week", "last week", "recent"]
     if any(term in ql for term in week_terms):
-        return "w"
+        return "week"
 
     # Month-level recency
     month_terms = ["this month", "past month", "last month"]
     if any(term in ql for term in month_terms):
-        return "m"
+        return "month"
 
     if "current" in ql or "now" in ql:
-        return "d"
+        return "day"
 
     return None
 
 
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+    retry=retry_if_exception_type((httpx.HTTPError, httpx.TimeoutException)),
+    before_sleep=before_sleep_log(logger, logging.WARNING),
+)
 async def search(
     query: str,
     engines: Optional[List[str]] = None,
     language: Optional[str] = None,
 ) -> List[Dict]:
-    """Search via SearxNG with automatic time-range filtering for recency queries."""
+    """Search via SearxNG with automatic time-range filtering for recency queries.
+
+    Implements retry logic with exponential backoff for transient failures.
+    Retries up to 3 times for HTTP errors and timeouts.
+    """
     url = f"{SEARXNG_URL}/search"
     params = {"q": query, "format": "json"}
 
@@ -140,18 +157,42 @@ async def search(
         params["engines"] = ",".join(engines)
     if language:
         params["language"] = language
-    async with httpx.AsyncClient(timeout=10) as client:
-        r = await client.get(url, params=params)
-        r.raise_for_status()
-        data = r.json()
-        # Normalize to a list of {title, url, pageContent}
-        results = []
-        for item in data.get("results", []):
-            results.append(
-                {
-                    "title": item.get("title") or item.get("source") or "",
-                    "url": item.get("url", ""),
-                    "pageContent": item.get("content") or item.get("snippet") or "",
-                }
+
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.get(url, params=params)
+            r.raise_for_status()
+            data = r.json()
+            # Normalize to a list of {title, url, pageContent}
+            results = []
+            for item in data.get("results", []):
+                results.append(
+                    {
+                        "title": item.get("title") or item.get("source") or "",
+                        "url": item.get("url", ""),
+                        "pageContent": item.get("content") or item.get("snippet") or "",
+                    }
+                )
+            logger.info(
+                "SearxNG search completed",
+                extra={
+                    "query": query,
+                    "result_count": len(results),
+                    "time_range": time_range,
+                },
             )
-        return results
+            return results
+    except httpx.HTTPError as e:
+        logger.error(
+            "SearxNG HTTP error",
+            extra={"query": query, "error": str(e), "url": url},
+            exc_info=True,
+        )
+        raise
+    except Exception as e:
+        logger.error(
+            "SearxNG search failed",
+            extra={"query": query, "error": str(e)},
+            exc_info=True,
+        )
+        raise

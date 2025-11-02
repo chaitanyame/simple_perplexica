@@ -341,7 +341,15 @@ async def synthesize_answer(
         if url:
             allowed_urls.add(url)
         title = s.get("title", "")
-        content = (s.get("pageContent", "") or "")[: max(200, context_chars)]
+        # Use full content fetched from URLs instead of truncating
+        # context_chars is still useful for controlling snippet-only sources
+        full_content = s.get("pageContent", "") or ""
+        # Only truncate if it's a short snippet (< 500 chars means it's from search API, not fetched URL)
+        if len(full_content) < 500:
+            content = full_content[: max(200, context_chars)]
+        else:
+            # It's fetched content - use it all (already chunked to ~2000 chars by fetch_urls)
+            content = full_content
         context_lines.append(f"[{idx}] {title} ({url}): {content}")
     context = "\n".join(context_lines)
 
