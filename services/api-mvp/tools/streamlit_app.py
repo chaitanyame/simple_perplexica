@@ -14,6 +14,7 @@ def post_search(
     base_url: str,
     query: str,
     focus_mode: str,
+    optimization_mode: str,
     system_instructions: Optional[str],
     stream: bool,
 ):
@@ -21,6 +22,7 @@ def post_search(
     payload = {
         "query": query,
         "focusMode": focus_mode,
+        "optimizationMode": optimization_mode,
         "stream": stream,
     }
     if system_instructions:
@@ -33,12 +35,14 @@ def stream_search(
     base_url: str,
     query: str,
     focus_mode: str,
+    optimization_mode: str,
     system_instructions: Optional[str],
 ) -> Iterator[dict]:
     url = f"{base_url}/api/search"
     payload = {
         "query": query,
         "focusMode": focus_mode,
+        "optimizationMode": optimization_mode,
         "stream": True,
     }
     if system_instructions:
@@ -92,6 +96,12 @@ def main():
             ],
             index=0,
         )
+        optimization_mode = st.selectbox(
+            "Optimization Mode",
+            ["speed", "balanced", "quality"],
+            index=1,  # Default to balanced
+            help="Speed: Fast, snippets only | Balanced: Moderate, some URL fetching | Quality: Slow, full URL content",
+        )
         use_stream = st.toggle("Stream results", value=False)
         st.divider()
         if st.button("Check Providers"):
@@ -127,7 +137,12 @@ def main():
             with st.spinner("Requesting…"):
                 try:
                     r = post_search(
-                        base_url, query, focus_mode, system_instructions, stream=False
+                        base_url,
+                        query,
+                        focus_mode,
+                        optimization_mode,
+                        system_instructions,
+                        stream=False,
                     )
                     if r.status_code >= 400:
                         st.error(f"Error {r.status_code}: {r.text}")
@@ -153,7 +168,7 @@ def main():
         streamed_sources: list[dict] = []
         try:
             for event in stream_search(
-                base_url, query, focus_mode, system_instructions
+                base_url, query, focus_mode, optimization_mode, system_instructions
             ):
                 etype = event.get("type")
                 edata = event.get("data")

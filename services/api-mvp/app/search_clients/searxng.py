@@ -146,11 +146,22 @@ async def search(
     params = {"q": query, "format": "json"}
 
     # Add time_range if query suggests recency
-    time_range = _detect_recency_need(query)
+    # BUT: Skip time filtering for "trending" queries since trending pages are already time-filtered
+    query_lower = query.lower()
+    is_trending_query = any(
+        term in query_lower
+        for term in ["trending", "popular", "top repositories", "most starred"]
+    )
+
+    time_range = None if is_trending_query else _detect_recency_need(query)
     if time_range:
         params["time_range"] = time_range
         logger.info(
             f"SpaCy detected temporal intent: time_range={time_range} for query: {query}"
+        )
+    elif is_trending_query:
+        logger.info(
+            f"Detected trending query, skipping time_range filter to preserve trending pages: {query}"
         )
 
     if engines:
@@ -173,12 +184,15 @@ async def search(
                         "pageContent": item.get("content") or item.get("snippet") or "",
                     }
                 )
+            # Log top URLs for debugging
+            top_urls = [r.get("url") for r in results[:5]]
             logger.info(
                 "SearxNG search completed",
                 extra={
                     "query": query,
                     "result_count": len(results),
                     "time_range": time_range,
+                    "top_5_urls": top_urls,
                 },
             )
             return results

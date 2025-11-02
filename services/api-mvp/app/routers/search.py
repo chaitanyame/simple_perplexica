@@ -250,10 +250,14 @@ async def search(req: SearchRequest, request: Request):
     # If no sources are available, proceed gracefully with empty sources.
 
     # ENHANCEMENT: Optionally fetch full content from top search result URLs
-    # Only fetch if quality mode and we have sources from search engines
-    if req.optimizationMode == OptimizationMode.quality and fetched:
-        # Take top 3 URLs from fetched results to enrich with full content
-        top_urls = [s.get("url") for s in fetched[:3] if s.get("url")]
+    # Fetch URLs in balanced (2 URLs) and quality mode (3 URLs)
+    if (
+        req.optimizationMode in [OptimizationMode.balanced, OptimizationMode.quality]
+        and fetched
+    ):
+        # Balanced: fetch 2 URLs, Quality: fetch 3 URLs
+        num_urls = 2 if req.optimizationMode == OptimizationMode.balanced else 3
+        top_urls = [s.get("url") for s in fetched[:num_urls] if s.get("url")]
         if top_urls:
             try:
                 enriched_docs = await fetch_and_process_urls(
