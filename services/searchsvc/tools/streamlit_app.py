@@ -85,7 +85,8 @@ def post_generate_content(
         "topic": topic,
         "temperature": temperature,
     }
-    return httpx.post(url, json=payload, timeout=180)
+    # Increase timeout to 5 minutes (300s) as CrewAI research can take time
+    return httpx.post(url, json=payload, timeout=300)
 
 
 def main():
@@ -238,9 +239,27 @@ def main():
                     st.error(f"Health check error: {e}")
 
         st.subheader("AI-Powered Research & Content Generation")
-        st.info(
-            "🤖 This service uses a multi-agent system (Research Analyst + Content Writer) to create comprehensive blog posts based on web research."
-        )
+
+        with st.expander("ℹ️ How it works", expanded=False):
+            st.markdown("""
+            **Multi-Agent Research System:**
+            
+            1. 🔍 **Research Analyst Agent** - Conducts comprehensive web research using SerperDev
+               - Searches for recent developments and news
+               - Analyzes industry trends and expert opinions
+               - Gathers statistical data and market insights
+               - Verifies sources and fact-checks information
+               
+            2. ✍️ **Content Writer Agent** - Transforms research into engaging content
+               - Creates well-structured blog posts
+               - Maintains factual accuracy with citations
+               - Formats content with proper markdown
+               - Includes hyperlinked references
+               
+            **Typical Process Time:** 2-4 minutes
+            
+            **Note:** The agents make multiple web searches and LLM calls, which takes time but produces high-quality, well-researched content.
+            """)
 
         topic = st.text_area(
             "Research Topic",
@@ -271,7 +290,7 @@ def main():
                 st.warning("Please enter a research topic.")
             else:
                 with st.spinner(
-                    "🔍 Researching and writing... This may take 1-2 minutes..."
+                    "🔍 Researching and writing... This typically takes 2-4 minutes. The AI agents are searching the web, analyzing sources, and crafting your content..."
                 ):
                     try:
                         response = post_generate_content(
