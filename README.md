@@ -524,7 +524,7 @@ See [OPTIMIZATIONS_SUMMARY.md](OPTIMIZATIONS_SUMMARY.md) for detailed performanc
 ```
 simple_perplexica/
 ├── services/
-│   └── api-mvp/              # Main API service
+│   └── searchsvc/            # Main API service
 │       ├── app/
 │       │   ├── main.py       # FastAPI application
 │       │   ├── models.py     # Pydantic models
@@ -552,7 +552,7 @@ simple_perplexica/
 ### Running Locally (Without Docker)
 
 ```bash
-cd services/api-mvp
+cd services/searchsvc
 
 # Install dependencies
 pip install -r requirements.txt

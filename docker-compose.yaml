@@ -1,11 +1,11 @@
 services:
   # ============================================================
-  # Primary AI Search API (MVP)
+  # Primary AI Search API (Search Service)
   # ============================================================
   api:
     build:
       context: .
-      dockerfile: services/api-mvp/Dockerfile
+      dockerfile: services/searchsvc/Dockerfile
     image: chaitanyame/simple-perplexica:latest
     environment:
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
@@ -53,18 +53,36 @@ services:
     restart: unless-stopped
 
   # ============================================================
+  # Research Service (Content Generation)
+  # ============================================================
+  researchsvc:
+    build:
+      context: .
+      dockerfile: services/researchsvc/Dockerfile
+    environment:
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - OPENROUTER_MODEL=${OPENROUTER_MODEL:-deepseek/deepseek-chat-v3.1:free}
+      - SERPER_API_KEY=${SERPER_API_KEY}
+      - HOST=0.0.0.0
+      - PORT=3002
+    ports:
+      - '3002:3002'
+    restart: unless-stopped
+
+  # ============================================================
   # Optional: Streamlit UI for API Testing
   # ============================================================
   ui:
     build:
       context: .
-      dockerfile: services/api-mvp/tools/Dockerfile
+      dockerfile: services/searchsvc/tools/Dockerfile
     environment:
       - API_BASE_URL=http://api:3001
     ports:
       - '8501:8501'
     depends_on:
       - api
+      - researchsvc
     restart: unless-stopped
 
 volumes:

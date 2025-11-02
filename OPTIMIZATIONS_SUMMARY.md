@@ -8,8 +8,8 @@
 
 ### 1. ✅ Redis Caching (75% Cost Reduction)
 **Files:**
-- `services/api-mvp/app/utils/cache.py` (NEW) - Complete Redis caching layer
-- `services/api-mvp/app/providers/openrouter.py` (MODIFIED) - Integrated caching
+- `services/searchsvc/app/utils/cache.py` (NEW) - Complete Redis caching layer
+- `services/searchsvc/app/providers/openrouter.py` (MODIFIED) - Integrated caching
 
 **Implementation:**
 - Async Redis client with graceful fallback
@@ -28,7 +28,7 @@
 
 ### 2. ✅ Async URL Fetching (3x Faster)
 **Files:**
-- `services/api-mvp/app/utils/fetch_urls.py` (MODIFIED)
+- `services/searchsvc/app/utils/fetch_urls.py` (MODIFIED)
 
 **Implementation:**
 - Replaced sequential `for` loop with `asyncio.gather()`
@@ -45,9 +45,9 @@
 
 ### 3. ✅ HTTP Connection Pooling (30-50% Faster)
 **Files:**
-- `services/api-mvp/app/utils/http_client.py` (NEW) - Shared client
-- `services/api-mvp/app/utils/fetch_urls.py` (MODIFIED)
-- `services/api-mvp/app/providers/openrouter.py` (MODIFIED)
+- `services/searchsvc/app/utils/http_client.py` (NEW) - Shared client
+- `services/searchsvc/app/utils/fetch_urls.py` (MODIFIED)
+- `services/searchsvc/app/providers/openrouter.py` (MODIFIED)
 
 **Implementation:**
 - Singleton `httpx.AsyncClient` with connection limits
@@ -65,7 +65,9 @@
 
 ### 4. ✅ mem0 Conversation Storage
 **Files:**
-- `services/api-mvp/app/utils/memory.py` (NEW)
+## Modified Files
+
+- `services/searchsvc/app/utils/memory.py` (NEW)
 - `requirements.txt` (UPDATED)
 
 **Implementation:**
@@ -162,12 +164,12 @@ redis:
 
 ### Check Cache Hits
 ```powershell
-docker compose logs api-mvp | Select-String -Pattern "cache|Redis"
+docker compose logs searchsvc | Select-String -Pattern "cache|Redis"
 ```
 
 ### Check Async Fetch Performance
 ```powershell
-docker compose logs api-mvp | Select-String -Pattern "concurrent|Concurrent"
+docker compose logs searchsvc | Select-String -Pattern "concurrent|Concurrent"
 ```
 
 ### Check Redis Status
@@ -236,7 +238,7 @@ docker exec simple_perplexica-redis-1 redis-cli PING
 - **Persistence:** AOF (Append-Only File) enabled
 - **Volume:** `vetuku-redis-data` for persistence
 - **Network:** Docker internal network
-- **Port:** 6379 (accessible from api-mvp container)
+- **Port:** 6379 (accessible from searchsvc container)
 
 ---
 

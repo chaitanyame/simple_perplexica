@@ -2,13 +2,13 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-COPY services/api-mvp/requirements.txt ./
+COPY services/searchsvc/requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Download SpaCy English model for NLP-based temporal detection
 RUN python -m spacy download en_core_web_sm
 
-COPY services/api-mvp /app
+COPY services/searchsvc /app
 
 ENV PORT=3001
 EXPOSE 3001

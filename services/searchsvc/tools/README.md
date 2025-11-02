@@ -9,7 +9,7 @@ Create a virtual environment (optional but recommended) and install dependencies
 ```pwsh
 python -m venv .venv-tools
 ./.venv-tools/Scripts/Activate.ps1
-pip install -r services/api-mvp/tools/requirements.txt
+pip install -r services/searchsvc/tools/requirements.txt
 ```
 
 ## Run
@@ -18,7 +18,7 @@ Ensure the API is running and reachable. Then start Streamlit:
 
 ```pwsh
 $env:API_BASE_URL = "http://localhost:3001"
-streamlit run services/api-mvp/tools/streamlit_app.py
+streamlit run services/searchsvc/tools/streamlit_app.py
 ```
 
 - Use the sidebar to pick a focus mode and toggle streaming.
