@@ -1,6 +1,7 @@
 import os
 import inspect
 import httpx
+import logging
 from dataclasses import dataclass
 from typing import List, Dict, Set, Optional
 
@@ -10,6 +11,8 @@ from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.models.openai import OpenAIModel
 
 from ..utils.http_client import get_http_client
+
+logger = logging.getLogger(__name__)
 
 
 def _env_or_default(name: str, default: str) -> str:
@@ -26,6 +29,9 @@ OPENROUTER_BASE_URL = _env_or_default(
 )
 OPENROUTER_MODEL = _env_or_default(
     "OPENROUTER_MODEL", "deepseek/deepseek-chat-v3.1:free"
+)
+OPENROUTER_SYSINSTRUCT_MODEL = _env_or_default(
+    "OPENROUTER_SYSINSTRUCT_MODEL", "openai/gpt-oss-20b:free"
 )
 OPENROUTER_EMBEDDING_MODEL = _env_or_default(
     "OPENROUTER_EMBEDDING_MODEL",
@@ -114,6 +120,86 @@ class DecisionOutput(BaseModel):
     need_search: bool
     optimized_query: Optional[str] = None
     links: List[str] = Field(default_factory=list)
+
+
+async def generate_system_instructions(
+    query: str, focus_mode: str, optimization_mode: str = "balanced"
+) -> str:
+    """Generate system instructions using a lightweight LLM when not provided.
+
+    Uses openai/gpt-oss-20b:free model to create appropriate instructions based on query,
+    focus mode, and optimization mode.
+    """
+    if not OPENROUTER_API_KEY:
+        # Fallback to default if no API key
+        return "You are a helpful search assistant. Answer the user's question accurately and concisely based on the provided sources."
+
+    # Enhanced prompt with optimization mode context
+    prompt = f"""Given this search query, focus mode, and optimization mode, generate concise system instructions (2-3 sentences) for an AI assistant.
+
+Query: {query}
+Focus Mode: {focus_mode}
+Optimization Mode: {optimization_mode}
+
+Focus Mode Guide:
+- webSearch: General web searches, current events, trending topics
+- youtubeSearch: Video content, tutorials, demonstrations, visual learning
+- academicSearch: Scholarly articles, research papers, academic content
+- redditSearch: Community discussions, opinions, user experiences
+
+Optimization Mode Guide:
+- speed: Quick, concise answers with snippets only
+- balanced: Moderate detail with some full content
+- quality: Comprehensive, detailed answers with extensive source content
+
+Generate system instructions that specify:
+1. The assistant's role/expertise based on focus mode
+2. Expected response format (markdown lists, tables, bullet points, etc.)
+3. Detail level based on optimization mode (concise for speed, comprehensive for quality)
+4. Special requirements (video timestamps for YouTube, citations for academic, community insights for Reddit)
+
+System Instructions:"""
+
+    try:
+        client = get_http_client()
+        response = await client.post(
+            f"{OPENROUTER_BASE_URL}/chat/completions",
+            headers={
+                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": OPENROUTER_SYSINSTRUCT_MODEL,
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 250,
+                "temperature": 0.7,
+            },
+            timeout=10,
+        )
+        response.raise_for_status()
+        data = response.json()
+
+        generated_instructions = data["choices"][0]["message"]["content"].strip()
+        logger.info(
+            "Auto-generated system instructions",
+            extra={
+                "query": query[:50],
+                "focus_mode": focus_mode,
+                "optimization_mode": optimization_mode,
+                "model": OPENROUTER_SYSINSTRUCT_MODEL,
+                "instructions_length": len(generated_instructions),
+                "instructions_preview": generated_instructions[:150],
+            },
+        )
+        return generated_instructions
+
+    except Exception as e:
+        # Fallback to default if generation fails
+        logger.warning(
+            "Failed to auto-generate system instructions, using fallback",
+            extra={"query": query, "focus_mode": focus_mode, "error": str(e)},
+        )
+        return f"You are a helpful {focus_mode.replace('Search', '')} assistant. Answer the user's question accurately and concisely based on the provided sources."
 
 
 @dataclass
@@ -348,11 +434,22 @@ async def synthesize_answer(
     system_instructions: str | None = None,
     history: Optional[List[List[str]]] = None,
     context_chars: int = 800,
+    focus_mode: str = "webSearch",
+    optimization_mode: str = "balanced",
 ) -> str:
     """Synthesize answer from sources.
 
     OPTIMIZATION: Uses Redis caching for LLM responses based on query + context hash
+
+    If system_instructions is None, automatically generates appropriate instructions
+    using openai/gpt-oss-20b:free based on the query, focus mode, and optimization mode.
     """
+    # Generate system instructions if not provided (fallback)
+    if system_instructions is None or not system_instructions.strip():
+        system_instructions = await generate_system_instructions(
+            query, focus_mode, optimization_mode
+        )
+
     # Check cache first
     from ..utils.cache import cache_response_get, cache_response_set, hash_context
 

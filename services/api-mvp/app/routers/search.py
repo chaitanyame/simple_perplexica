@@ -250,13 +250,13 @@ async def search(req: SearchRequest, request: Request):
     # If no sources are available, proceed gracefully with empty sources.
 
     # ENHANCEMENT: Optionally fetch full content from top search result URLs
-    # Fetch URLs in balanced (2 URLs) and quality mode (3 URLs)
+    # Fetch URLs in balanced (2 URLs) and quality mode (5 URLs)
     if (
         req.optimizationMode in [OptimizationMode.balanced, OptimizationMode.quality]
         and fetched
     ):
-        # Balanced: fetch 2 URLs, Quality: fetch 3 URLs
-        num_urls = 2 if req.optimizationMode == OptimizationMode.balanced else 3
+        # Balanced: fetch 2 URLs, Quality: fetch 5 URLs
+        num_urls = 2 if req.optimizationMode == OptimizationMode.balanced else 5
         top_urls = [s.get("url") for s in fetched[:num_urls] if s.get("url")]
         if top_urls:
             try:
@@ -328,6 +328,8 @@ async def search(req: SearchRequest, request: Request):
                 req.systemInstructions,
                 req.history,
                 context_chars,
+                req.focusMode.value,
+                req.optimizationMode.value,
             )
             yield json.dumps({"type": "response", "data": message}) + "\n"
             yield json.dumps({"type": "done"}) + "\n"
@@ -341,6 +343,8 @@ async def search(req: SearchRequest, request: Request):
         req.systemInstructions,
         req.history,
         context_chars,
+        req.focusMode.value,
+        req.optimizationMode.value,
     )
     norm_sources = [
         Source(

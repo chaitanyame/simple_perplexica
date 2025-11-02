@@ -146,22 +146,28 @@ async def search(
     params = {"q": query, "format": "json"}
 
     # Add time_range if query suggests recency
-    # BUT: Skip time filtering for "trending" queries since trending pages are already time-filtered
+    # Special handling for trending queries:
+    # - For WEB search: Skip time_range (trending pages are already time-filtered)
+    # - For VIDEO/YOUTUBE search: Keep time_range (need recency filter for video results)
     query_lower = query.lower()
     is_trending_query = any(
         term in query_lower
         for term in ["trending", "popular", "top repositories", "most starred"]
     )
+    is_video_search = engines and "youtube" in engines
 
-    time_range = None if is_trending_query else _detect_recency_need(query)
+    # Skip time_range only for trending WEB queries (not for video searches)
+    should_skip_time_filter = is_trending_query and not is_video_search
+
+    time_range = None if should_skip_time_filter else _detect_recency_need(query)
     if time_range:
         params["time_range"] = time_range
         logger.info(
             f"SpaCy detected temporal intent: time_range={time_range} for query: {query}"
         )
-    elif is_trending_query:
+    elif should_skip_time_filter:
         logger.info(
-            f"Detected trending query, skipping time_range filter to preserve trending pages: {query}"
+            f"Detected trending WEB query, skipping time_range filter to preserve trending pages: {query}"
         )
 
     if engines:
