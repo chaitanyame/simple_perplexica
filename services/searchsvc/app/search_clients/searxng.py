@@ -3,6 +3,7 @@ import os
 from typing import List, Dict, Optional
 import logging
 import spacy
+import re
 from functools import lru_cache
 from tenacity import (
     retry,
@@ -13,6 +14,23 @@ from tenacity import (
 )
 
 SEARXNG_URL = os.getenv("SEARXNG_URL", "http://searxng:8080")
+# Tunables via environment
+SEARXNG_ENGINES = os.getenv(
+    "SEARXNG_ENGINES", ""
+)  # e.g. "google,bing,duckduckgo,brave"
+SEARXNG_CATEGORIES = os.getenv("SEARXNG_CATEGORIES", "general,news,it")
+SEARXNG_TIME_RANGE_DEFAULT = os.getenv(
+    "SEARXNG_TIME_RANGE", ""
+)  # day|week|month|year or ''
+SEARXNG_LANGUAGE_DEFAULT = os.getenv("SEARXNG_LANGUAGE", "en")
+SEARXNG_PAGES = int(
+    os.getenv("SEARXNG_PAGES", "1")
+)  # number of pages to fetch per query
+SEARXNG_BACKFILL_ENABLED = os.getenv("SEARXNG_BACKFILL_ENABLED", "true").lower() in (
+    "1",
+    "true",
+    "yes",
+)
 logger = logging.getLogger(__name__)
 
 
@@ -143,7 +161,7 @@ async def search(
     Retries up to 3 times for HTTP errors and timeouts.
     """
     url = f"{SEARXNG_URL}/search"
-    params = {"q": query, "format": "json"}
+    base_params = {"format": "json", "safesearch": 0}
 
     # Add time_range if query suggests recency
     # Special handling for trending queries:
@@ -161,7 +179,6 @@ async def search(
 
     time_range = None if should_skip_time_filter else _detect_recency_need(query)
     if time_range:
-        params["time_range"] = time_range
         logger.info(
             f"SpaCy detected temporal intent: time_range={time_range} for query: {query}"
         )
@@ -170,26 +187,84 @@ async def search(
             f"Detected trending WEB query, skipping time_range filter to preserve trending pages: {query}"
         )
 
-    if engines:
-        params["engines"] = ",".join(engines)
-    if language:
-        params["language"] = language
+    # Build base params with env + function args
+    effective_language = language or SEARXNG_LANGUAGE_DEFAULT
+    effective_engines = (
+        engines
+        if engines is not None
+        else (
+            [e.strip() for e in SEARXNG_ENGINES.split(",") if e.strip()]
+            if SEARXNG_ENGINES
+            else None
+        )
+    )
+
+    # Assemble configured params
+    params_common = dict(base_params)
+    params_common["language"] = effective_language
+    if SEARXNG_CATEGORIES:
+        params_common["categories"] = SEARXNG_CATEGORIES
+    if effective_engines:
+        params_common["engines"] = ",".join(effective_engines)
 
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            r = await client.get(url, params=params)
-            r.raise_for_status()
-            data = r.json()
-            # Normalize to a list of {title, url, pageContent}
-            results = []
-            for item in data.get("results", []):
+            # Paginate across multiple pages if configured
+            all_items: List[Dict] = []
+            pages = max(1, SEARXNG_PAGES)
+            for pageno in range(1, pages + 1):
+                page_params = dict(params_common)
+                page_params["q"] = query
+                page_params["pageno"] = pageno
+
+                # Apply time_range for each page
+                page_params_with_time = dict(page_params)
+                if time_range:
+                    page_params_with_time["time_range"] = time_range
+                elif SEARXNG_TIME_RANGE_DEFAULT:
+                    page_params_with_time["time_range"] = SEARXNG_TIME_RANGE_DEFAULT
+
+                r = await client.get(url, params=page_params_with_time)
+                r.raise_for_status()
+                data = r.json()
+                all_items.extend(data.get("results", []))
+
+            # Optional site backfill for key vendors if mentioned in query
+            if SEARXNG_BACKFILL_ENABLED:
+                try:
+                    entities = _entities_from_query(query)
+                    missing_domains = _missing_canonical_domains(entities, all_items)
+                    for dom in missing_domains:
+                        backfill_params = dict(params_common)
+                        backfill_params["q"] = f"site:{dom} {query}"
+                        backfill_params["pageno"] = 1
+                        if time_range:
+                            backfill_params["time_range"] = time_range
+                        elif SEARXNG_TIME_RANGE_DEFAULT:
+                            backfill_params["time_range"] = SEARXNG_TIME_RANGE_DEFAULT
+                        r2 = await client.get(url, params=backfill_params)
+                        if r2.status_code == 200:
+                            all_items.extend(r2.json().get("results", []))
+                except Exception:
+                    # Soft-fail backfill; continue with what we have
+                    pass
+
+            # Normalize and dedupe by URL (keep first)
+            seen_urls = set()
+            results: List[Dict] = []
+            for item in all_items:
+                u = item.get("url", "")
+                if not u or u in seen_urls:
+                    continue
+                seen_urls.add(u)
                 results.append(
                     {
                         "title": item.get("title") or item.get("source") or "",
-                        "url": item.get("url", ""),
+                        "url": u,
                         "pageContent": item.get("content") or item.get("snippet") or "",
                     }
                 )
+
             # Log top URLs for debugging
             top_urls = [r.get("url") for r in results[:5]]
             logger.info(
@@ -197,7 +272,10 @@ async def search(
                 extra={
                     "query": query,
                     "result_count": len(results),
-                    "time_range": time_range,
+                    "time_range": time_range or SEARXNG_TIME_RANGE_DEFAULT or None,
+                    "engines": params_common.get("engines"),
+                    "categories": params_common.get("categories"),
+                    "pages": pages,
                     "top_5_urls": top_urls,
                 },
             )
@@ -216,3 +294,38 @@ async def search(
             exc_info=True,
         )
         raise
+
+
+# --- Helpers ---
+
+_ENTITY_DOMAINS = {
+    "aws": ["aws.amazon.com/blogs", "aws.amazon.com/about-aws/whats-new"],
+    "azure": ["azure.microsoft.com/en-us/blog", "cloudblogs.microsoft.com"],
+    "gcp": ["cloud.google.com/blog", "cloud.google.com/releases"],
+    "google cloud": ["cloud.google.com/blog", "cloud.google.com/releases"],
+}
+
+
+def _entities_from_query(query: str) -> List[str]:
+    q = (query or "").lower()
+    entities = []
+    for name in ["aws", "azure", "gcp", "google cloud"]:
+        # Build pattern without backslash escapes in f-string expression
+        name_pattern = name.replace(" ", r"\s+")  # allow whitespace variations
+        pattern = rf"\b{name_pattern}\b"
+        if re.search(pattern, q):
+            entities.append(name)
+    return entities
+
+
+def _missing_canonical_domains(entities: List[str], items: List[Dict]) -> List[str]:
+    if not entities:
+        return []
+    urls = [(it.get("url") or "") for it in items]
+    missing: List[str] = []
+    for e in entities:
+        domains = _ENTITY_DOMAINS.get(e, [])
+        if not any(any(d in u for d in domains) for u in urls):
+            if domains:
+                missing.append(domains[0])  # pick primary domain for backfill
+    return missing

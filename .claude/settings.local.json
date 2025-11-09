@@ -1,8 +1,14 @@
 {
   "permissions": {
     "allow": [
-      "Bash(git commit -m \"$(cat <<''EOF''\nfeat: Implement result aggregation and parallel search infrastructure (TDD Phase 2b-c)\n\nResultAggregator Implementation:\n- Deduplication by URL with quality-based selection\n- Diversity filtering to prevent domain domination\n- Per-query result limiting for balanced coverage\n- Multi-query aggregation strategy\n- Quality-based sorting and reranking support\n\nTest Suite (24 additional tests):\n- test_result_aggregator.py: 12 tests for aggregation ✅\n- test_parallel_search.py: 12 tests for search orchestration ⏳\n\nSearch Router Enhancements:\n- Support both string and enum focus modes\n- Backward compatibility maintained\n- Flexible focus mode handling for testing\n\nArchitecture Ready For:\n- Multi-query parallel execution\n- Result deduplication and diversity\n- Advanced reranking with multiple signals\n\nNext Phase: Reranking enhancements, synthesis, caching\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nEOF\n)\")",
-      "Bash(git commit -m \"$(cat <<''EOF''\nfeat: Implement multi-query reranking and synthesis enhancements (TDD Phase 2d-e)\n\nMulti-Query Reranking:\n- Max similarity scoring across all queries\n- Multi-signal ranking (semantic + freshness + entity coverage)\n- Query-specific result boosting\n- Threshold-based filtering\n- Stability and order preservation\n\nSynthesis Enhancement:\n- Structured response generation for multi-query\n- Balanced coverage of all sub-queries\n- Citation preservation\n- Support for custom instructions\n- Multi-query context awareness\n\nTest Suite (50 additional tests):\n- test_multi_query_reranking.py: 13 tests ✅\n- test_synthesis_enhancement.py: 12 tests ✅\n\nTotal Test Count: 110+ tests across all phases\n- Phase 1: 32 tests (crawl4ai)\n- Phase 2a: 29 tests (decomposition)\n- Phase 2b-c: 24 tests (aggregation & parallel)\n- Phase 2d-e: 25 tests (reranking & synthesis)\n\nAll tests passing with comprehensive coverage of:\n✅ Content fetching (crawl4ai + fallback)\n✅ Query decomposition (LLM-based multi-query)\n✅ Result aggregation (dedup, diversity, limits)\n✅ Multi-signal reranking\n✅ Structured synthesis\n\nProduction-Ready Features:\n- Backward compatibility maintained\n- Error handling and graceful degradation\n- Caching infrastructure ready\n- Performance optimized\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nEOF\n)\")"
+      "Bash(git commit:*)",
+      "Bash(python -m py_compile:*)",
+      "Bash(docker-compose build:*)",
+      "Bash(docker run:*)",
+      "Bash(python:*)",
+      "Bash(docker-compose logs:*)",
+      "Bash(docker-compose up:*)",
+      "Bash(curl:*)"
     ],
     "deny": [],
     "ask": []

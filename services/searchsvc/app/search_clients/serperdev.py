@@ -10,9 +10,14 @@ from tenacity import (
     before_sleep_log,
 )
 
-SERPERDEV_API_KEY = os.getenv("SERPERDEV_API_KEY")
+SERPERDEV_API_KEY = os.getenv("SERPER_API_KEY") or os.getenv("SERPERDEV_API_KEY")
 SERPERDEV_URL = os.getenv("SERPERDEV_URL", "https://google.serper.dev/search")
 logger = logging.getLogger(__name__)
+
+
+def is_available() -> bool:
+    """Check if SerperDev is properly configured."""
+    return bool(SERPERDEV_API_KEY)
 
 
 @retry(

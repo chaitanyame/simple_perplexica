@@ -50,9 +50,9 @@ LLM_STRUCTURED_OUTPUT = os.getenv("LLM_STRUCTURED_OUTPUT", "false").lower() in (
 WEBSEARCH_RESPONSE_PROMPT = """You are Perplexica, an AI model skilled in web search and crafting detailed, engaging, and well-structured answers. You excel at summarizing web pages and extracting relevant information to create professional, blog-style responses.
 
 Your task is to provide answers that are:
-- **Informative and relevant**: Thoroughly address the user's query using the given context.
-- **Well-structured**: Include clear headings and subheadings, and use a professional tone to present information concisely and logically.
-- **Engaging and detailed**: Write responses that read like a high-quality blog post, including extra details and relevant insights.
+- **Informative and relevant**: Thoroughly address the user's query using the given context with comprehensive depth.
+- **Well-structured**: Include clear headings and subheadings, and use a professional tone to present information in detail and logically.
+- **Engaging and detailed**: Write responses that read like a high-quality, in-depth research article or blog post, including extensive details, analysis, and relevant insights.
 - **Cited and credible**: Use inline citations with [number] notation to refer to the context source(s) for each fact or detail included.
 - **Explanatory and Comprehensive**: Strive to explain the topic in depth, offering detailed analysis, insights, and clarifications wherever applicable.
 
@@ -60,7 +60,7 @@ Your task is to provide answers that are:
 - **Structure**: Use a well-organized format with proper headings (e.g., "## Overview" or "## Key Features"). Present information in paragraphs or concise bullet points where appropriate.
 - **Tone and Style**: Maintain a neutral, journalistic tone with engaging narrative flow. Write as though you're crafting an in-depth article for a professional audience.
 - **Markdown Usage**: Format your response with Markdown for clarity. Use headings, subheadings, bold text, and italicized words as needed to enhance readability.
-- **Length and Depth**: Provide comprehensive coverage of the topic. Avoid superficial responses and strive for depth without unnecessary repetition. Expand on technical or complex topics to make them easier to understand for a general audience.
+- **Length and Depth**: Provide extensive, comprehensive coverage of the topic with deep analysis. Write detailed, thorough responses that fully explore all relevant aspects. Avoid superficial answers and strive for maximum depth and detail without unnecessary repetition. Expand significantly on technical or complex topics to make them easier to understand for a general audience. Aim for research-grade depth and completeness.
 - **No main heading/title**: Start your response directly with the introduction unless asked to provide a specific title.
 - **Conclusion or Summary**: Include a concluding paragraph that synthesizes the provided information or suggests potential next steps, where appropriate.
 
@@ -107,7 +107,7 @@ class AnswerOutput(BaseModel):
     - citations: list of source URLs used in the answer
     """
 
-    answer: str = Field(description="Concise answer text for the user.")
+    answer: str = Field(description="Comprehensive, detailed research-style answer for the user with extensive analysis and depth.")
     citations: List[str] = Field(
         default_factory=list,
         description="List of citation URLs referenced in the answer.",
@@ -117,6 +117,116 @@ class AnswerOutput(BaseModel):
 # DecisionOutput moved to models.py to support multi-query decomposition
 # Import from models instead
 from ..models import DecisionOutput  # noqa: E402
+
+
+async def decide_search_and_rewrite(
+    query: str, history: List[Dict] | None, focus_mode: str
+) -> DecisionOutput:
+    """Decide if a search is needed and generate optimized search queries."""
+    if not OPENROUTER_API_KEY:
+        raise RuntimeError("OPENROUTER_API_KEY not configured")
+
+    from datetime import datetime, timezone
+
+    current_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    # Enhanced system prompt for query generation with multi-query decomposition support
+    instructions = f"""You are an expert search query generator with multi-query decomposition capability. Your task is to analyze the user's query and conversation history to determine if a web search is necessary. If it is, decide the search strategy and generate optimized search queries.
+
+Current date: {current_date}
+
+User's query: "{query}"
+
+**Decision Rules:**
+1. If it's a simple greeting (Hi, Hello, How are you) or basic writing task WITHOUT needing facts, set need_search=false
+2. For factual questions requiring up-to-date information, set need_search=true
+
+**Search Strategy Rules:**
+- Use "multi" strategy when the query:
+  - Mentions multiple distinct entities/vendors/products (e.g., "AWS, Azure, GCP")
+  - Contains "latest news" or "recent updates" about a topic that has multiple facets
+  - Asks for comparisons or multiple perspectives
+  - Requires comprehensive coverage of a broad topic
+
+- Use "single" strategy when the query:
+  - Asks about one specific thing
+  - Is a simple definition or fact check
+  - Has a narrow, well-defined scope
+
+**Query Generation Guidelines:**
+1. **Temporal Expansion**: If query contains "latest," "recent," "this month," etc., generate queries that include:
+   - Current month and year (e.g., "November 2025")
+   - Just the year (e.g., "2025")
+   - "new features 2025" or "updates 2025"
+   
+2. **Facet Generation**: Break down broad queries into specific sub-queries:
+   - Example: "Microsoft Azure latest news" → 
+     ["Microsoft Azure latest news", "Microsoft Azure updates November 2025", "Microsoft Azure new features 2025"]
+   
+3. **Entity Expansion**: For queries mentioning multiple entities, create one query per entity:
+   - Example: "cloud news from aws, azure, gcp" →
+     ["AWS cloud latest news", "Azure cloud latest news", "Google Cloud latest news"]
+
+4. **Diversity**: Each sub-query should cover a different angle or timeframe
+5. **Simplicity**: Keep queries concise and keyword-focused
+6. **Max 4 queries**: Generate 1-4 queries maximum
+
+**Examples:**
+
+Query: "Microsoft Azure latest news"
+Response: {{"need_search": true, "optimized_queries": ["Microsoft Azure latest news", "Microsoft Azure updates November 2025", "Microsoft Azure new features 2025"], "search_strategy": "multi", "links": []}}
+
+Query: "latest cloud news from aws, azure, gcp"
+Response: {{"need_search": true, "optimized_queries": ["AWS cloud latest news", "Azure cloud latest news", "Google Cloud latest news"], "search_strategy": "multi", "links": []}}
+
+Query: "What is the capital of France"
+Response: {{"need_search": true, "optimized_queries": ["Capital of France"], "search_strategy": "single", "links": []}}
+
+Query: "Hi, how are you?"
+Response: {{"need_search": false, "optimized_queries": ["not_needed"], "search_strategy": "single", "links": []}}
+
+Based on the user's query and the guidelines above, decide if a search is needed, choose the strategy, and provide the optimized queries.
+"""
+
+    # Use the simpler API approach consistent with the rest of the codebase
+    os.environ.setdefault("OPENAI_API_KEY", OPENROUTER_API_KEY)
+    os.environ.setdefault("OPENAI_BASE_URL", OPENROUTER_BASE_URL)
+    model = OpenAIModel(OPENROUTER_MODEL)
+
+    agent = Agent[None, DecisionOutput](
+        model,
+        output_type=DecisionOutput,
+        instructions=instructions,
+    )
+
+    try:
+        result = agent.run(query)  # type: ignore[arg-type]
+        if inspect.isawaitable(result):
+            result = await result
+        output = getattr(result, "output", None)
+        if isinstance(output, DecisionOutput):
+            return output
+        # Attempt to coerce from string
+        try:
+            import json as _json
+
+            data = _json.loads(str(output) if output is not None else str(result))
+            return DecisionOutput(**data)
+        except Exception:
+            return DecisionOutput(
+                need_search=True,
+                optimized_queries=[query],
+                search_strategy="single",
+                links=[],
+            )
+    except Exception:
+        # Graceful fallback
+        return DecisionOutput(
+            need_search=True,
+            optimized_queries=[query],
+            search_strategy="single",
+            links=[],
+        )
 
 
 async def generate_system_instructions(
@@ -217,7 +327,7 @@ def _build_agent(system_instructions: str | None, deps: AnswerDeps) -> Agent:
     model = OpenAIModel(OPENROUTER_MODEL)
     system = system_instructions or (
         "You are a helpful search assistant."
-        " Answer concisely. When context is provided, cite 1-3 sources only from the provided context URLs."
+        " Provide comprehensive, detailed answers with in-depth analysis. When context is provided, cite sources using [n] notation from the provided context URLs."
         " If no context is provided, you may answer without citations."
     )
 
@@ -244,9 +354,9 @@ def _build_agent(system_instructions: str | None, deps: AnswerDeps) -> Agent:
                     u
                     for u in output.citations
                     if (not ctx.deps.allowed_urls) or (u in ctx.deps.allowed_urls)
-                ][:5]
-            if len(output.answer) > 4000:
-                output.answer = output.answer[:4000].rstrip() + "…"
+                ][:10]  # Increased from 5 to 10 for more sources
+            if len(output.answer) > 20000:  # Increased from 4000 to 20000 for deep research
+                output.answer = output.answer[:20000].rstrip() + "…"
             return output
 
         return agent
@@ -309,123 +419,6 @@ async def embed_texts(
 
         # Ensure length matches input count when possible
         return out
-
-
-async def decide_search_and_rewrite(
-    query: str,
-    history: Optional[List[List[str]]] = None,
-    focus_mode: Optional[str] = None,
-) -> DecisionOutput:
-    """Decide if search is needed and produce an optimized standalone query.
-
-    Mirrors Perplexica behavior with few-shot examples:
-    - Greetings/simple writing -> need_search=false
-    - Questions -> need_search=true with optimized query
-    - URL references -> extract links and question
-    """
-    if not OPENROUTER_API_KEY:
-        raise RuntimeError("OPENROUTER_API_KEY not configured")
-
-    os.environ.setdefault("OPENAI_API_KEY", OPENROUTER_API_KEY)
-    os.environ.setdefault("OPENAI_BASE_URL", OPENROUTER_BASE_URL)
-    model = OpenAIModel(OPENROUTER_MODEL)
-
-    instructions = """You are an AI question rephraser and search decider with query decomposition capability.
-
-You will be given a conversation and a follow-up question. You need to:
-1. Decide if web search is needed (need_search: true/false)
-2. If search is needed, decide search strategy: "single" for simple queries, "multi" for multi-faceted queries
-3. Rephrase the question(s) to be standalone (optimized_queries array - can be 1+ queries)
-4. Extract any URLs mentioned (links array)
-
-Rules for decomposition:
-- If query mentions multiple distinct entities/vendors/topics (e.g., "AWS, Azure, GCP"), decompose into sub-queries
-- Each sub-query should be focused and standalone
-- For simple/single-topic queries, use strategy="single" with one query
-- Max 5 sub-queries per decomposition
-- Example decomposition: "latest cloud news from aws, azure, gcp" →
-  strategy="multi", optimized_queries=["AWS cloud latest news", "Azure cloud latest news", "Google Cloud latest news"]
-
-Rules for strategy:
-- If it's a simple greeting (Hi, Hello, How are you) or basic writing task WITHOUT needing facts, set need_search=false
-- For factual questions, set need_search=true and create a clear standalone query
-- If user asks to summarize a URL or PDF, include "summarize" in queries and include URL in links
-- If user references a URL for context, include it in links and create an appropriate question
-- Always make queries standalone by including context from conversation history
-
-Return JSON with: need_search (bool), optimized_queries (string[]), search_strategy ("single" or "multi"), links (string[])
-
-Examples:
-
-Query: "What is the capital of France"
-Response: {"need_search": true, "optimized_queries": ["Capital of France"], "search_strategy": "single", "links": []}
-
-Query: "latest cloud news from aws, azure, gcp"
-Response: {"need_search": true, "optimized_queries": ["AWS cloud latest news", "Azure cloud latest news", "Google Cloud latest news"], "search_strategy": "multi", "links": []}
-
-Query: "Hi, how are you?"
-Response: {"need_search": false, "optimized_queries": ["not_needed"], "search_strategy": "single", "links": []}
-
-Query: "Summarize the content from https://example.com"
-Response: {"need_search": true, "optimized_queries": ["summarize"], "search_strategy": "single", "links": ["https://example.com"]}
-"""
-
-    # Flatten history for context
-    convo = []
-    if history:
-        for pair in history:
-            if isinstance(pair, list) and len(pair) == 2:
-                u, a = pair
-                if isinstance(u, str):
-                    convo.append(f"User: {u}")
-                if isinstance(a, str):
-                    convo.append(f"Assistant: {a}")
-    convo_text = "\n".join(convo) or "(none)"
-
-    agent = Agent[None, DecisionOutput](
-        model,
-        output_type=DecisionOutput,
-        instructions=instructions,
-    )
-    prompt = (
-        f"Conversation:\n{convo_text}\n\n"
-        f"Focus mode: {focus_mode or 'unknown'}\n"
-        f"Question: {query}\n"
-        "Respond with JSON only."
-    )
-
-    try:
-        result = agent.run(prompt)  # type: ignore[arg-type]
-        if inspect.isawaitable(result):
-            result = await result
-        output = getattr(result, "output", None)
-        if isinstance(output, DecisionOutput):
-            return output
-        # Attempt to coerce from string
-        try:
-            import json as _json
-
-            data = _json.loads(str(output) if output is not None else str(result))
-            return DecisionOutput(**data)
-        except Exception:
-            return DecisionOutput(need_search=True, optimized_queries=[query], links=[])
-    except Exception:
-        # Graceful fallback on model errors (429, connection, etc.)
-        # Simple heuristic: if the query looks like a greeting or trivial writing task, skip search.
-        ql = (query or "").strip().lower()
-        greetings = {
-            "hi",
-            "hello",
-            "hey",
-            "hey there",
-            "how are you",
-            "good morning",
-            "good evening",
-        }
-        writing_prefixes = ("write ", "draft ", "compose ", "rewrite ", "paraphrase ")
-        if ql in greetings or any(ql.startswith(p) for p in writing_prefixes):
-            return DecisionOutput(need_search=False, optimized_queries=[query], links=[])
-        return DecisionOutput(need_search=True, optimized_queries=[query], links=[])
 
 
 async def synthesize_answer(

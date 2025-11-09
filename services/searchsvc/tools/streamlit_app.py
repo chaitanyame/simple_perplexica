@@ -877,73 +877,62 @@ def main():
                 st.code(query_to_run, language="text")
                 st.success("Query received and ready for processing")
 
+            # Perform initial API call once (captures decomposition + first pass sources)
+            try:
+                initial_response = httpx.post(
+                    f"{pipeline_api_url}/api/search",
+                    json={
+                        "query": query_to_run,
+                        "focusMode": "webSearch",
+                        "optimizationMode": "balanced",
+                        "stream": False
+                    },
+                    timeout=90
+                )
+                initial_json = initial_response.json() if initial_response.status_code == 200 else {}
+            except Exception as _e:
+                initial_json = {}
+
             # ===== STAGE 2: DECOMPOSITION =====
             with stage2:
                 st.markdown("### Query Decomposition")
-                with st.spinner("Analyzing query..."):
-                    try:
-                        decomp_response = httpx.post(
-                            f"{pipeline_api_url}/api/search",
-                            json={
-                                "query": query_to_run,
-                                "focusMode": "webSearch",
-                                "optimizationMode": "balanced",
-                                "stream": False
-                            },
-                            timeout=60
-                        )
+                decomposition = initial_json.get('decomposition')
+                if not decomposition:
+                    st.warning("No decomposition metadata returned. The backend may not yet support it or fell back to single-query.")
+                else:
+                    st.success("✅ Decomposition completed")
+                    st.markdown(f"**Strategy:** `{decomposition.get('strategy', 'single')}`")
+                    optimized_queries = decomposition.get('optimized_queries', []) or []
+                    st.markdown(f"**Optimized Queries ({len(optimized_queries)}):**")
+                    for i, oq in enumerate(optimized_queries, 1):
+                        st.code(f"{i}. {oq}", language="text")
+                    st.caption(f"Total Query Count: {decomposition.get('query_count', len(optimized_queries))}")
 
-                        if decomp_response.status_code == 200:
-                            result = decomp_response.json()
-
-                            st.success("✅ Decomposition completed")
-                            st.markdown(f"**Query:** {query_to_run}")
-                            st.markdown(f"**Sources Found:** {len(result.get('sources', []))}")
-
-                            if result.get('sources'):
-                                st.markdown("**Source URLs:**")
-                                for src in result['sources'][:3]:
-                                    st.caption(f"- {src.get('title', 'Untitled')}: {src.get('url', 'N/A')}")
-                        else:
-                            st.error(f"Error: {decomp_response.status_code}")
-                            st.code(decomp_response.text[:500])
-                    except Exception as e:
-                        st.error(f"Error during decomposition: {e}")
+                # Show a preview of first few sources (raw fetch results at this stage)
+                preview_sources = initial_json.get('sources', [])
+                if preview_sources:
+                    st.markdown("**Initial Source Previews (first 3):**")
+                    for src in preview_sources[:3]:
+                        st.caption(f"- {src.get('title', 'Untitled')} | {src.get('url', 'N/A')}")
+                else:
+                    st.info("No sources in initial response (possibly decision.need_search = False or provider failure).")
 
             # ===== STAGE 3: SEARCH RESULTS =====
             with stage3:
                 st.markdown("### Search Results")
-                with st.spinner("Fetching search results..."):
-                    try:
-                        search_response = httpx.post(
-                            f"{pipeline_api_url}/api/search",
-                            json={
-                                "query": query_to_run,
-                                "focusMode": "webSearch",
-                                "optimizationMode": "balanced",
-                                "stream": False
-                            },
-                            timeout=60
-                        )
-
-                        if search_response.status_code == 200:
-                            result = search_response.json()
-                            sources = result.get('sources', [])
-
-                            st.success(f"✅ Found {len(sources)} results")
-
-                            if sources:
-                                st.markdown("**Top Results:**")
-                                for idx, src in enumerate(sources[:5], 1):
-                                    with st.container(border=True):
-                                        st.markdown(f"**{idx}. [{src.get('title', 'Untitled')}]({src.get('url', '#')})**")
-                                        st.caption(f"URL: {src.get('url', 'N/A')}")
-                                        if src.get('pageContent'):
-                                            st.caption(f"Snippet: {src['pageContent'][:150]}...")
-                        else:
-                            st.error(f"Error: {search_response.status_code}")
-                    except Exception as e:
-                        st.error(f"Error fetching results: {e}")
+                # Reuse initial sources (already represent post-search results)
+                sources = initial_json.get('sources', [])
+                if sources:
+                    st.success(f"✅ Retrieved {len(sources)} sources from initial search")
+                    st.markdown("**Top Results:**")
+                    for idx, src in enumerate(sources[:5], 1):
+                        with st.container(border=True):
+                            st.markdown(f"**{idx}. [{src.get('title', 'Untitled')}]({src.get('url', '#')})**")
+                            st.caption(f"URL: {src.get('url', 'N/A')}")
+                            if src.get('pageContent'):
+                                st.caption(f"Snippet: {src['pageContent'][:150]}...")
+                else:
+                    st.error("No sources returned. Try a broader query or check backend logs.")
 
             # ===== STAGE 4: AGGREGATION =====
             with stage4:
@@ -961,36 +950,19 @@ def main():
             # ===== STAGE 5: FINAL ANSWER =====
             with stage5:
                 st.markdown("### Final Answer")
-                with st.spinner("Generating answer..."):
-                    try:
-                        final_response = httpx.post(
-                            f"{pipeline_api_url}/api/search",
-                            json={
-                                "query": query_to_run,
-                                "focusMode": "webSearch",
-                                "optimizationMode": "balanced",
-                                "stream": False
-                            },
-                            timeout=60
-                        )
-
-                        if final_response.status_code == 200:
-                            result = final_response.json()
-
-                            st.success("✅ Answer synthesized from sources")
-                            st.markdown("**Generated Response:**")
-                            st.markdown(result.get('message', 'No message generated'))
-
-                            sources = result.get('sources', [])
-                            if sources:
-                                st.divider()
-                                st.markdown("**Citation Sources:**")
-                                for idx, src in enumerate(sources, 1):
-                                    st.markdown(f"**[{idx}]** [{src.get('title', 'Untitled')}]({src.get('url', '#')})")
-                        else:
-                            st.error(f"Error: {final_response.status_code}")
-                    except Exception as e:
-                        st.error(f"Error generating answer: {e}")
+                # If initial response already contains synthesized message (non-stream flow), show it
+                if initial_json.get('message'):
+                    st.success("✅ Answer synthesized from initial search response")
+                    st.markdown("**Generated Response:**")
+                    st.markdown(initial_json.get('message', 'No message generated'))
+                    sources = initial_json.get('sources', [])
+                    if sources:
+                        st.divider()
+                        st.markdown("**Citation Sources:**")
+                        for idx, src in enumerate(sources, 1):
+                            st.markdown(f"**[{idx}]** [{src.get('title', 'Untitled')}]({src.get('url', '#')})")
+                else:
+                    st.info("No final answer in initial response. Backend may be streaming-only or encountered an error.")
 
     # ==================== TAB 5: DEBUG VIEW ====================
     with tab5:

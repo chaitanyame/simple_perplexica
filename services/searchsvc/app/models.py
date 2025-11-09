@@ -53,9 +53,17 @@ class Source(BaseModel):
     pageContent: Optional[str] = None
 
 
+class DecompositionInfo(BaseModel):
+    """Information about query decomposition process"""
+    strategy: SearchStrategy  # single or multi
+    optimized_queries: List[str]  # Queries that were actually executed
+    query_count: int = Field(default=1)  # Number of decomposed queries
+
+
 class SearchResponse(BaseModel):
     message: str
     sources: List[Source]
+    decomposition: Optional[DecompositionInfo] = None  # Optional decomposition metadata
 
 
 class ProviderModel(BaseModel):
