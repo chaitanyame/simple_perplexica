@@ -63,6 +63,18 @@ def _make_cache_key(prefix: str, *args) -> str:
     return f"{prefix}:{hash_digest}"
 
 
+def _generate_cache_key(data: str) -> str:
+    """Generate a cache key from data string.
+
+    Args:
+        data: The data to hash
+
+    Returns:
+        A consistent hash key for the given data
+    """
+    return hashlib.sha256(data.encode()).hexdigest()[:16]
+
+
 async def cache_get(key: str) -> Optional[Any]:
     """Get value from cache."""
     client = await get_redis_client()
