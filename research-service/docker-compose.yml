@@ -1,0 +1,105 @@
+version: '3.8'
+
+services:
+  # PostgreSQL with pgvector extension
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: research_postgres
+    environment:
+      POSTGRES_DB: research_db
+      POSTGRES_USER: research_user
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-research_password}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./src/database/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U research_user -d research_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - research-network
+
+  # Redis for caching
+  redis:
+    image: redis:7-alpine
+    container_name: research_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - research-network
+
+  # Research service API
+  research-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: research_api
+    ports:
+      - "8001:8000"
+    environment:
+      # Database
+      DATABASE_URL: postgresql+asyncpg://research_user:${POSTGRES_PASSWORD:-research_password}@postgres:5432/research_db
+      
+      # Redis
+      REDIS_URL: redis://redis:6379/0
+      
+      # LLM & Monitoring
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY}
+      LANGFUSE_HOST: ${LANGFUSE_HOST:-https://cloud.langfuse.com}
+      
+      # Search (reuse from main app if available)
+      SEARXNG_BASE_URL: ${SEARXNG_BASE_URL:-http://host.docker.internal:8080}
+      SERPER_API_KEY: ${SERPER_API_KEY}
+      
+      # App settings
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      API_RATE_LIMIT: ${API_RATE_LIMIT:-10/minute}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./src:/app/src
+      - ./tests:/app/tests
+    command: uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
+    networks:
+      - research-network
+
+  # Streamlit testing UI (optional)
+  streamlit:
+    build:
+      context: .
+      dockerfile: Dockerfile.streamlit
+    container_name: research_streamlit
+    ports:
+      - "8501:8501"
+    environment:
+      RESEARCH_API_URL: http://research-api:8000
+    depends_on:
+      - research-api
+    volumes:
+      - ./streamlit_app.py:/app/streamlit_app.py
+    command: streamlit run streamlit_app.py
+    networks:
+      - research-network
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  research-network:
+    driver: bridge
