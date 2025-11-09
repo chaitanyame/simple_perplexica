@@ -794,6 +794,16 @@ def main():
     with tab4:
         st.subheader("📊 Dynamic Search Pipeline - Real-Time Visualization")
 
+        # Configure API URL in sidebar
+        with st.sidebar:
+            st.header("Pipeline Demo Settings")
+            pipeline_api_url = st.text_input(
+                "Search API Base URL",
+                value="http://api:3001",
+                help="e.g., http://api:3001 (Docker) or http://localhost:3001 (local)",
+            )
+            st.divider()
+
         with st.expander("ℹ️ How the Pipeline Works", expanded=True):
             st.markdown("""
             The Perplexica search pipeline has 6 key stages:
@@ -873,7 +883,7 @@ def main():
                 with st.spinner("Analyzing query..."):
                     try:
                         decomp_response = httpx.post(
-                            f"http://localhost:3001/api/search",
+                            f"{pipeline_api_url}/api/search",
                             json={
                                 "query": query_to_run,
                                 "focusMode": "webSearch",
@@ -906,7 +916,7 @@ def main():
                 with st.spinner("Fetching search results..."):
                     try:
                         search_response = httpx.post(
-                            f"http://localhost:3001/api/search",
+                            f"{pipeline_api_url}/api/search",
                             json={
                                 "query": query_to_run,
                                 "focusMode": "webSearch",
@@ -954,7 +964,7 @@ def main():
                 with st.spinner("Generating answer..."):
                     try:
                         final_response = httpx.post(
-                            f"http://localhost:3001/api/search",
+                            f"{pipeline_api_url}/api/search",
                             json={
                                 "query": query_to_run,
                                 "focusMode": "webSearch",
