@@ -189,6 +189,89 @@ async def rerank_sources(
         return sources
 
 
+def _aggregate_multi_query_results(results: List[Dict]) -> List[Dict]:
+    """
+    Aggregate multi-query search results with deduplication and filtering.
+
+    Process:
+    1. Deduplicate by URL (keep version with longer content)
+    2. Apply diversity filter (max 3 results per domain)
+    3. Sort by content quality (longer content = higher quality)
+    4. Limit to ~10 results for final answer
+    """
+    if not results:
+        return []
+
+    from urllib.parse import urlparse
+
+    # Step 1: Deduplicate by URL (keep best version)
+    url_to_best = {}
+    for result in results:
+        url = result.get("url", "")
+        if not url:
+            continue
+
+        if url not in url_to_best:
+            url_to_best[url] = result
+        else:
+            existing = url_to_best[url]
+            existing_content_len = len(existing.get("pageContent", ""))
+            new_content_len = len(result.get("pageContent", ""))
+            if new_content_len > existing_content_len:
+                url_to_best[url] = result
+
+    deduplicated = list(url_to_best.values())
+
+    logger.info(
+        "Deduplication completed",
+        extra={
+            "original_count": len(results),
+            "deduplicated_count": len(deduplicated),
+        },
+    )
+
+    # Step 2: Diversity filter (max 3 per domain)
+    domain_counts = {}
+    filtered = []
+
+    for result in deduplicated:
+        url = result.get("url", "")
+        try:
+            domain = urlparse(url).netloc
+        except:
+            domain = "unknown"
+
+        domain_count = domain_counts.get(domain, 0)
+
+        if domain_count < 3:  # Max 3 results per domain
+            filtered.append(result)
+            domain_counts[domain] = domain_count + 1
+
+    logger.info(
+        "Diversity filter completed",
+        extra={
+            "input_count": len(deduplicated),
+            "filtered_count": len(filtered),
+            "unique_domains": len(domain_counts),
+        },
+    )
+
+    # Step 3: Sort by content quality (content length as quality proxy)
+    filtered.sort(key=lambda x: len(x.get("pageContent", "")), reverse=True)
+
+    # Step 4: Limit to ~10 results
+    limited = filtered[:10]
+
+    logger.info(
+        "Multi-query aggregation completed",
+        extra={
+            "final_count": len(limited),
+        },
+    )
+
+    return limited
+
+
 @router.post("/search", response_model=SearchResponse)
 @limiter.limit("10/minute")  # Rate limit: 10 requests per minute per IP
 async def search(req: SearchRequest, request: Request):
@@ -234,9 +317,6 @@ async def search(req: SearchRequest, request: Request):
 
         decision = _D()
 
-    # Force search for all queries: prefer first optimized query if provided
-    # For now, use first query for backward compatibility; multi-query support comes later
-    effective_query = (decision.optimized_queries[0] if decision.optimized_queries else req.query) if decision.need_search else None
     sources = []
 
     # Process user-provided or LLM-suggested links by fetching actual content
@@ -259,7 +339,74 @@ async def search(req: SearchRequest, request: Request):
                 for url in decision.links
             ]
 
-    fetched = await get_sources(effective_query, req.focusMode)
+    # Multi-query search implementation
+    if decision.need_search:
+        search_strategy = getattr(decision, 'search_strategy', 'single')
+
+        if search_strategy == "multi" and len(decision.optimized_queries) > 1:
+            # MULTI-QUERY: Execute all queries in parallel and aggregate
+            all_results = []
+
+            logger.info(
+                "Multi-query search initiated",
+                extra={
+                    "query_count": len(decision.optimized_queries),
+                    "queries": decision.optimized_queries,
+                },
+            )
+
+            # Execute each query and collect results
+            for idx, query in enumerate(decision.optimized_queries, 1):
+                try:
+                    query_results = await get_sources(query, req.focusMode)
+
+                    # Tag results with source query for tracking
+                    for result in (query_results or []):
+                        result['_source_query'] = query
+                        result['_query_index'] = idx
+
+                    all_results.extend(query_results or [])
+
+                    logger.info(
+                        f"Query {idx} search completed",
+                        extra={
+                            "query": query,
+                            "result_count": len(query_results or []),
+                        },
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"Query {idx} failed",
+                        extra={"query": query, "error": str(e)},
+                    )
+
+            # AGGREGATION: Process multi-query results
+            fetched = _aggregate_multi_query_results(all_results)
+
+            logger.info(
+                "Multi-query aggregation completed",
+                extra={
+                    "raw_count": len(all_results),
+                    "final_count": len(fetched),
+                },
+            )
+        else:
+            # SINGLE-QUERY: Use existing behavior
+            effective_query = (
+                decision.optimized_queries[0]
+                if decision.optimized_queries
+                else req.query
+            )
+
+            logger.info(
+                "Single-query search",
+                extra={"query": effective_query},
+            )
+
+            fetched = await get_sources(effective_query, req.focusMode)
+    else:
+        fetched = []
+
     sources = link_sources + (fetched or [])
     # If no sources are available, proceed gracefully with empty sources.
 
