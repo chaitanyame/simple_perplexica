@@ -174,13 +174,259 @@ def get_test_files(base_path: str = ".") -> Dict[str, str]:
     }
 
 
+def get_pipeline_examples() -> Dict[str, Dict]:
+    """Get example data showing the complete pipeline flow."""
+    return {
+        "Multi-Query: Cloud Providers": {
+            "input_query": "latest cloud technologies news from aws, azure, and gcp",
+            "decomposition": {
+                "need_search": True,
+                "strategy": "multi",
+                "optimized_queries": [
+                    "AWS cloud latest news and updates",
+                    "Azure cloud latest news and updates",
+                    "Google Cloud Platform latest news"
+                ]
+            },
+            "crawl_example": {
+                "url": "https://aws.amazon.com/blogs/aws/",
+                "markdown_content": """# AWS News and Announcements
+
+## Latest Updates
+- **New EC2 Instance Types**: Latest generation instances with better performance
+- **AWS Lambda Improvements**: Enhanced cold start performance
+- **RDS Auto Scaling**: Automatic scaling for databases
+
+## Technical Details
+AWS provides cloud computing services including compute, storage, databases, networking, and more.
+"""
+            },
+            "search_results": {
+                "AWS cloud latest news and updates": [
+                    {
+                        "title": "AWS announces new EC2 instances",
+                        "url": "https://aws.amazon.com/blogs/aws/ec2-new",
+                        "pageContent": "AWS has announced new EC2 instance types with 40% better performance..."
+                    },
+                    {
+                        "title": "AWS Lambda Cold Start Reduction",
+                        "url": "https://aws.amazon.com/blogs/aws/lambda-cold-start",
+                        "pageContent": "The latest Lambda improvements reduce cold start latency by 50%..."
+                    },
+                    {
+                        "title": "RDS Multi-AZ Improvements",
+                        "url": "https://aws.amazon.com/blogs/aws/rds-improvements",
+                        "pageContent": "RDS now supports automatic failover with reduced recovery time..."
+                    }
+                ],
+                "Azure cloud latest news and updates": [
+                    {
+                        "title": "Azure Compute Updates 2024",
+                        "url": "https://azure.microsoft.com/en-us/blog/compute-updates/",
+                        "pageContent": "Microsoft Azure introduces new compute options including VM SKUs..."
+                    },
+                    {
+                        "title": "Azure SQL Database Enhancements",
+                        "url": "https://azure.microsoft.com/en-us/blog/sql-enhancements/",
+                        "pageContent": "Azure SQL now includes new performance optimization features..."
+                    }
+                ],
+                "Google Cloud Platform latest news": [
+                    {
+                        "title": "GCP Compute Engine Updates",
+                        "url": "https://cloud.google.com/blog/products/compute",
+                        "pageContent": "Google Cloud announces new machine types and pricing updates..."
+                    },
+                    {
+                        "title": "BigQuery Performance Improvements",
+                        "url": "https://cloud.google.com/blog/products/bigquery",
+                        "pageContent": "BigQuery now runs 3x faster with optimized query execution..."
+                    }
+                ]
+            },
+            "aggregation": {
+                "step1_limit_per_query": "Limit each query to 5 results",
+                "step2_flatten": "Combine all results (9 total from 3 queries)",
+                "step3_deduplicate": "Remove duplicate URLs, keep best version",
+                "step4_diversity_filter": "Max 3 results per domain",
+                "step5_sort": "Sort by content quality (longer content = higher rank)",
+                "step6_limit_total": "Cap to 10 total results",
+                "final_results": [
+                    {
+                        "rank": 1,
+                        "title": "AWS announces new EC2 instances",
+                        "url": "https://aws.amazon.com/blogs/aws/ec2-new",
+                        "pageContent": "AWS has announced new EC2 instance types with 40% better performance...",
+                        "source": "AWS cloud latest news and updates"
+                    },
+                    {
+                        "rank": 2,
+                        "title": "Azure Compute Updates 2024",
+                        "url": "https://azure.microsoft.com/en-us/blog/compute-updates/",
+                        "pageContent": "Microsoft Azure introduces new compute options including VM SKUs...",
+                        "source": "Azure cloud latest news and updates"
+                    },
+                    {
+                        "rank": 3,
+                        "title": "GCP Compute Engine Updates",
+                        "url": "https://cloud.google.com/blog/products/compute",
+                        "pageContent": "Google Cloud announces new machine types and pricing updates...",
+                        "source": "Google Cloud Platform latest news"
+                    }
+                ]
+            },
+            "synthesis": {
+                "answer": """The major cloud providers have released significant updates in 2024:
+
+**AWS** [1] announces new EC2 instance types with 40% better performance, enhanced Lambda cold start performance, and RDS multi-AZ improvements with reduced recovery times.
+
+**Azure** [2] introduces new compute options including VM SKUs and enhanced SQL database performance optimization features.
+
+**Google Cloud Platform** [3] announces new machine types, pricing updates, and BigQuery performance improvements running 3x faster with optimized query execution.
+
+All three providers continue to compete on performance, features, and pricing.""",
+                "sources": [
+                    {
+                        "num": 1,
+                        "title": "AWS announces new EC2 instances",
+                        "url": "https://aws.amazon.com/blogs/aws/ec2-new"
+                    },
+                    {
+                        "num": 2,
+                        "title": "Azure Compute Updates 2024",
+                        "url": "https://azure.microsoft.com/en-us/blog/compute-updates/"
+                    },
+                    {
+                        "num": 3,
+                        "title": "GCP Compute Engine Updates",
+                        "url": "https://cloud.google.com/blog/products/compute"
+                    }
+                ]
+            }
+        },
+        "Single Query: Python Tutorial": {
+            "input_query": "python programming tutorial for beginners",
+            "decomposition": {
+                "need_search": True,
+                "strategy": "single",
+                "optimized_queries": [
+                    "Python programming tutorial for beginners"
+                ]
+            },
+            "crawl_example": {
+                "url": "https://docs.python.org/3/tutorial/",
+                "markdown_content": """# Python Tutorial
+
+## Introduction
+Python is a high-level programming language with simple, easy-to-learn syntax.
+
+## Basic Concepts
+- **Variables and Types**: Understanding Python's dynamic typing
+- **Control Flow**: If statements, loops, and functions
+- **Data Structures**: Lists, tuples, dictionaries, and sets
+- **Object-Oriented Programming**: Classes and inheritance
+
+## Getting Started
+```python
+print("Hello, World!")
+x = 10
+y = 20
+print(x + y)
+```
+
+## Running Python
+You can run Python scripts using `python script.py`
+"""
+            },
+            "search_results": {
+                "Python programming tutorial for beginners": [
+                    {
+                        "title": "Python Official Tutorial",
+                        "url": "https://docs.python.org/3/tutorial/",
+                        "pageContent": "Python is a high-level programming language. This tutorial introduces..."
+                    },
+                    {
+                        "title": "W3Schools Python Tutorial",
+                        "url": "https://www.w3schools.com/python/",
+                        "pageContent": "Learn Python by examples. This tutorial covers all the basics..."
+                    },
+                    {
+                        "title": "Real Python Tutorials",
+                        "url": "https://realpython.com/start-here/",
+                        "pageContent": "Comprehensive Python tutorials for beginners including hands-on projects..."
+                    }
+                ]
+            },
+            "aggregation": {
+                "step1_limit_per_query": "Limit to 5 results per query",
+                "step2_flatten": "Single query → 3 results only",
+                "step3_deduplicate": "No duplicates in example",
+                "step4_diversity_filter": "All from different domains",
+                "step5_sort": "Sort by content quality",
+                "step6_limit_total": "Cap to 10 (3 results < 10)",
+                "final_results": [
+                    {
+                        "rank": 1,
+                        "title": "Real Python Tutorials",
+                        "url": "https://realpython.com/start-here/",
+                        "pageContent": "Comprehensive Python tutorials for beginners including hands-on projects...",
+                        "source": "Python programming tutorial for beginners"
+                    },
+                    {
+                        "rank": 2,
+                        "title": "Python Official Tutorial",
+                        "url": "https://docs.python.org/3/tutorial/",
+                        "pageContent": "Python is a high-level programming language. This tutorial introduces...",
+                        "source": "Python programming tutorial for beginners"
+                    },
+                    {
+                        "rank": 3,
+                        "title": "W3Schools Python Tutorial",
+                        "url": "https://www.w3schools.com/python/",
+                        "pageContent": "Learn Python by examples. This tutorial covers all the basics...",
+                        "source": "Python programming tutorial for beginners"
+                    }
+                ]
+            },
+            "synthesis": {
+                "answer": """Python is a high-level programming language perfect for beginners [1]. The official tutorial [1] introduces Python's basic concepts including variables, control flow, data structures, and object-oriented programming.
+
+For hands-on learning, Real Python [2] offers comprehensive tutorials with practical examples, while W3Schools [3] provides interactive exercises for learning by doing.
+
+Key topics to start with:
+- Variables and data types
+- Control flow (if/else, loops)
+- Functions and modules
+- Working with lists and dictionaries""",
+                "sources": [
+                    {
+                        "num": 1,
+                        "title": "Python Official Tutorial",
+                        "url": "https://docs.python.org/3/tutorial/"
+                    },
+                    {
+                        "num": 2,
+                        "title": "Real Python Tutorials",
+                        "url": "https://realpython.com/start-here/"
+                    },
+                    {
+                        "num": 3,
+                        "title": "W3Schools Python Tutorial",
+                        "url": "https://www.w3schools.com/python/"
+                    }
+                ]
+            }
+        }
+    }
+
+
 def main():
     st.set_page_config(page_title="API Tester", layout="wide")
     st.title("Simple Perplexica API Tester")
     st.caption("Test search and research services")
 
     # Create tabs for different services
-    tab1, tab2, tab3 = st.tabs(["🔍 Search Service", "📝 Research Service", "🧪 Test Runner"])
+    tab1, tab2, tab3, tab4 = st.tabs(["🔍 Search Service", "📝 Research Service", "🧪 Test Runner", "📊 Pipeline Demo"])
 
     # ==================== TAB 1: SEARCH SERVICE ====================
     with tab1:
@@ -543,6 +789,177 @@ def main():
             if stderr:
                 with st.expander("⚠️ Error Output"):
                     st.code(stderr, language="text")
+
+    # ==================== TAB 4: PIPELINE DEMO ====================
+    with tab4:
+        st.subheader("📊 Search Pipeline Demo - Input to Output Visualization")
+
+        with st.expander("ℹ️ How the Pipeline Works", expanded=True):
+            st.markdown("""
+            The Perplexica search pipeline has 6 key stages:
+
+            1. **Query Decomposition** - LLM analyzes query and decides if web search needed
+               - Simple queries → single focused search
+               - Multi-faceted queries → decomposed into sub-queries
+
+            2. **Content Crawling** - Fetch and extract markdown from URLs
+               - Uses crawl4ai for JavaScript-heavy pages
+               - Falls back to BeautifulSoup if needed
+
+            3. **Parallel Search** - Execute searches using SearxNG/SerperDev
+               - Runs all sub-queries in parallel
+               - Applies focus mode filters (academic, reddit, youtube, etc.)
+
+            4. **Result Aggregation** - Combine, deduplicate, and filter results
+               - Limit per query for balanced coverage
+               - Remove duplicates (keep highest quality version)
+               - Diversity filter (max 3 results per domain)
+               - Sort by content quality
+
+            5. **Answer Synthesis** - LLM generates final answer with citations
+               - Uses aggregated results as context
+               - Formats with [1], [2], etc. citations
+               - Includes chat history for context
+            """)
+
+        # Select example
+        examples = get_pipeline_examples()
+        selected_example = st.selectbox(
+            "Select Example Pipeline",
+            options=list(examples.keys()),
+            index=0
+        )
+
+        example_data = examples[selected_example]
+
+        st.divider()
+
+        # Create tabs for each pipeline stage
+        stage1, stage2, stage3, stage4, stage5, stage6 = st.tabs([
+            "1️⃣ Input Query",
+            "2️⃣ Decomposition",
+            "3️⃣ Crawl Example",
+            "4️⃣ Search Results",
+            "5️⃣ Aggregation",
+            "6️⃣ Final Answer"
+        ])
+
+        # ===== STAGE 1: INPUT QUERY =====
+        with stage1:
+            st.markdown("### Original User Query")
+            st.code(example_data["input_query"], language="text")
+            st.info("This is what the user types into Simple Perplexica")
+
+        # ===== STAGE 2: DECOMPOSITION =====
+        with stage2:
+            decomp = example_data["decomposition"]
+
+            st.markdown("### Query Decomposition Result")
+            st.markdown(f"**Need Search:** {decomp['need_search']}")
+            st.markdown(f"**Search Strategy:** `{decomp['strategy']}`")
+
+            st.markdown("**Optimized Queries:**")
+            for i, q in enumerate(decomp["optimized_queries"], 1):
+                st.markdown(f"{i}. `{q}`")
+
+            col1, col2 = st.columns(2)
+            with col1:
+                st.success("✅ Strategy Type")
+                if decomp["strategy"] == "single":
+                    st.markdown("**Single Query** - Direct search, no decomposition needed")
+                else:
+                    st.markdown("**Multi-Query** - Complex query decomposed into focused sub-queries")
+
+            with col2:
+                st.info("📝 LLM Decision Logic")
+                st.markdown("LLM analyzes query to detect:\n- Multi-faceted topics\n- Multiple entities\n- Complex requirements")
+
+        # ===== STAGE 3: CRAWL EXAMPLE =====
+        with stage3:
+            crawl = example_data["crawl_example"]
+
+            st.markdown("### Content Crawling Example")
+            st.markdown("**Input URL:**")
+            st.code(crawl["url"], language="text")
+
+            st.markdown("**Extracted Markdown Content:**")
+            st.markdown(crawl["markdown_content"])
+
+            st.info("💡 This is what crawl4ai/BeautifulSoup extracts from the URL. Content is cleaned and converted to markdown for LLM processing.")
+
+        # ===== STAGE 4: SEARCH RESULTS =====
+        with stage4:
+            st.markdown("### Search Results from Each Query")
+
+            search_results = example_data["search_results"]
+
+            for query_idx, (query, results) in enumerate(search_results.items(), 1):
+                with st.expander(f"Query {query_idx}: {query}", expanded=True if len(search_results) <= 2 else False):
+                    st.markdown(f"**Total Results:** {len(results)}")
+
+                    for result_idx, result in enumerate(results, 1):
+                        with st.container():
+                            st.markdown(f"**Result {result_idx}** 📄")
+                            st.markdown(f"**Title:** {result['title']}")
+                            st.markdown(f"**URL:** `{result['url']}`")
+                            st.markdown(f"**Snippet:** {result['pageContent']}")
+                            st.divider()
+
+        # ===== STAGE 5: AGGREGATION =====
+        with stage5:
+            st.markdown("### Result Aggregation Process")
+
+            agg = example_data["aggregation"]
+
+            # Show aggregation steps
+            col1, col2, col3 = st.columns(3)
+
+            steps_display = [
+                ("Step 1", agg["step1_limit_per_query"]),
+                ("Step 2", agg["step2_flatten"]),
+                ("Step 3", agg["step3_deduplicate"]),
+                ("Step 4", agg["step4_diversity_filter"]),
+                ("Step 5", agg["step5_sort"]),
+                ("Step 6", agg["step6_limit_total"]),
+            ]
+
+            cols = [col1, col2, col3]
+            for idx, (step_name, step_desc) in enumerate(steps_display):
+                with cols[idx % 3]:
+                    with st.container(border=True):
+                        st.markdown(f"**{step_name}**")
+                        st.caption(step_desc)
+
+            st.divider()
+            st.markdown("### Final Aggregated Results (Top 10)")
+
+            for result in agg["final_results"]:
+                with st.container(border=True):
+                    col1, col2 = st.columns([1, 10])
+                    with col1:
+                        st.metric("Rank", result["rank"])
+                    with col2:
+                        st.markdown(f"**[{result['title']}]({result['url']})**")
+                        st.caption(f"Query: {result['source']}")
+                        st.caption(result["pageContent"])
+
+        # ===== STAGE 6: FINAL ANSWER =====
+        with stage6:
+            st.markdown("### Generated Answer with Citations")
+
+            synthesis = example_data["synthesis"]
+
+            st.markdown("#### Final Response")
+            st.markdown(synthesis["answer"])
+
+            st.divider()
+            st.markdown("#### Citation References")
+
+            for source in synthesis["sources"]:
+                with st.container(border=True):
+                    st.markdown(f"**[{source['num']}]** [{source['title']}]({source['url']})")
+
+            st.info("💡 The [1], [2], [3] citations in the answer link to the sources above. This ensures transparency and allows users to verify information.")
 
 
 if __name__ == "__main__":
