@@ -453,8 +453,25 @@ def main():
 
             st.divider()
 
+            # Handle missing pytest
+            if "No module named pytest" in stderr or "No module named 'pytest'" in stderr:
+                st.error("❌ pytest is not installed")
+                st.warning("""
+                **To use the test runner, pytest needs to be installed:**
+
+                1. **In Docker container:** Rebuild the image with updated requirements
+                   ```bash
+                   docker-compose build ui
+                   docker-compose up ui
+                   ```
+
+                2. **Locally:** Install pytest
+                   ```bash
+                   pip install pytest pytest-asyncio
+                   ```
+                """)
             # Display summary
-            if exit_code == 0:
+            elif exit_code == 0:
                 st.success(f"✅ All tests passed!")
             else:
                 st.error(f"❌ Some tests failed (exit code: {exit_code})")
