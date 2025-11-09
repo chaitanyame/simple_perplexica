@@ -114,12 +114,9 @@ class AnswerOutput(BaseModel):
     )
 
 
-class DecisionOutput(BaseModel):
-    """Decision and rewritten query for search flow."""
-
-    need_search: bool
-    optimized_query: Optional[str] = None
-    links: List[str] = Field(default_factory=list)
+# DecisionOutput moved to models.py to support multi-query decomposition
+# Import from models instead
+from ..models import DecisionOutput  # noqa: E402
 
 
 async def generate_system_instructions(
@@ -333,41 +330,44 @@ async def decide_search_and_rewrite(
     os.environ.setdefault("OPENAI_BASE_URL", OPENROUTER_BASE_URL)
     model = OpenAIModel(OPENROUTER_MODEL)
 
-    instructions = """You are an AI question rephraser and search decider.
+    instructions = """You are an AI question rephraser and search decider with query decomposition capability.
 
 You will be given a conversation and a follow-up question. You need to:
 1. Decide if web search is needed (need_search: true/false)
-2. Rephrase the question to be standalone (optimized_query)
-3. Extract any URLs mentioned (links array)
+2. If search is needed, decide search strategy: "single" for simple queries, "multi" for multi-faceted queries
+3. Rephrase the question(s) to be standalone (optimized_queries array - can be 1+ queries)
+4. Extract any URLs mentioned (links array)
 
-Rules:
-- If it's a simple greeting (Hi, Hello, How are you) or basic writing task WITHOUT needing facts, set need_search=false and optimized_query="not_needed"
+Rules for decomposition:
+- If query mentions multiple distinct entities/vendors/topics (e.g., "AWS, Azure, GCP"), decompose into sub-queries
+- Each sub-query should be focused and standalone
+- For simple/single-topic queries, use strategy="single" with one query
+- Max 5 sub-queries per decomposition
+- Example decomposition: "latest cloud news from aws, azure, gcp" →
+  strategy="multi", optimized_queries=["AWS cloud latest news", "Azure cloud latest news", "Google Cloud latest news"]
+
+Rules for strategy:
+- If it's a simple greeting (Hi, Hello, How are you) or basic writing task WITHOUT needing facts, set need_search=false
 - For factual questions, set need_search=true and create a clear standalone query
-- If user asks to summarize a URL or PDF, set optimized_query="summarize" and include the URL in links
+- If user asks to summarize a URL or PDF, include "summarize" in queries and include URL in links
 - If user references a URL for context, include it in links and create an appropriate question
 - Always make queries standalone by including context from conversation history
 
-Return JSON with: need_search (bool), optimized_query (string), links (string[])
+Return JSON with: need_search (bool), optimized_queries (string[]), search_strategy ("single" or "multi"), links (string[])
 
 Examples:
 
 Query: "What is the capital of France"
-Response: {"need_search": true, "optimized_query": "Capital of France", "links": []}
+Response: {"need_search": true, "optimized_queries": ["Capital of France"], "search_strategy": "single", "links": []}
+
+Query: "latest cloud news from aws, azure, gcp"
+Response: {"need_search": true, "optimized_queries": ["AWS cloud latest news", "Azure cloud latest news", "Google Cloud latest news"], "search_strategy": "multi", "links": []}
 
 Query: "Hi, how are you?"
-Response: {"need_search": false, "optimized_query": "not_needed", "links": []}
-
-Query: "What is Docker?"
-Response: {"need_search": true, "optimized_query": "What is Docker", "links": []}
-
-Query: "Can you tell me what is X from https://example.com"
-Response: {"need_search": true, "optimized_query": "What is X?", "links": ["https://example.com"]}
+Response: {"need_search": false, "optimized_queries": ["not_needed"], "search_strategy": "single", "links": []}
 
 Query: "Summarize the content from https://example.com"
-Response: {"need_search": true, "optimized_query": "summarize", "links": ["https://example.com"]}
-
-Query: "Write a poem about nature"
-Response: {"need_search": false, "optimized_query": "not_needed", "links": []}
+Response: {"need_search": true, "optimized_queries": ["summarize"], "search_strategy": "single", "links": ["https://example.com"]}
 """
 
     # Flatten history for context
@@ -408,7 +408,7 @@ Response: {"need_search": false, "optimized_query": "not_needed", "links": []}
             data = _json.loads(str(output) if output is not None else str(result))
             return DecisionOutput(**data)
         except Exception:
-            return DecisionOutput(need_search=True, optimized_query=query, links=[])
+            return DecisionOutput(need_search=True, optimized_queries=[query], links=[])
     except Exception:
         # Graceful fallback on model errors (429, connection, etc.)
         # Simple heuristic: if the query looks like a greeting or trivial writing task, skip search.
@@ -424,8 +424,8 @@ Response: {"need_search": false, "optimized_query": "not_needed", "links": []}
         }
         writing_prefixes = ("write ", "draft ", "compose ", "rewrite ", "paraphrase ")
         if ql in greetings or any(ql.startswith(p) for p in writing_prefixes):
-            return DecisionOutput(need_search=False, optimized_query=query, links=[])
-        return DecisionOutput(need_search=True, optimized_query=query, links=[])
+            return DecisionOutput(need_search=False, optimized_queries=[query], links=[])
+        return DecisionOutput(need_search=True, optimized_queries=[query], links=[])
 
 
 async def synthesize_answer(

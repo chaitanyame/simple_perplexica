@@ -23,6 +23,12 @@ class FocusMode(str, Enum):
     redditSearch = "redditSearch"
 
 
+class SearchStrategy(str, Enum):
+    """Strategy for executing search queries"""
+    single = "single"  # Single optimized query
+    multi = "multi"    # Multiple decomposed queries
+
+
 class SearchRequest(BaseModel):
     chatModel: Optional[ModelRef] = None
     embeddingModel: Optional[ModelRef] = None
@@ -66,3 +72,11 @@ class Provider(BaseModel):
 
 class ProvidersResponse(BaseModel):
     providers: List[Provider]
+
+
+class DecisionOutput(BaseModel):
+    """Output from LLM decision on whether to search and query optimization"""
+    need_search: bool
+    optimized_queries: List[str]  # Can be single or multiple queries
+    search_strategy: SearchStrategy = Field(default=SearchStrategy.single)
+    links: List[str] = Field(default_factory=list)  # URLs mentioned in query

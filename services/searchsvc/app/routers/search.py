@@ -203,7 +203,8 @@ async def search(req: SearchRequest, request: Request):
             "Decision completed",
             extra={
                 "need_search": decision.need_search,
-                "optimized_query": decision.optimized_query,
+                "optimized_queries": decision.optimized_queries,
+                "search_strategy": getattr(decision, 'search_strategy', 'single'),
                 "links_count": len(decision.links) if decision.links else 0,
             },
         )
@@ -216,13 +217,15 @@ async def search(req: SearchRequest, request: Request):
         # Graceful fallback if LLM decisioning fails (e.g., rate limit)
         class _D:  # light shim to avoid import cycle
             need_search = True
-            optimized_query = req.query
+            optimized_queries = [req.query]
+            search_strategy = "single"
             links = []
 
         decision = _D()
 
-    # Force search for all queries: prefer optimized query if provided
-    effective_query = decision.optimized_query or req.query
+    # Force search for all queries: prefer first optimized query if provided
+    # For now, use first query for backward compatibility; multi-query support comes later
+    effective_query = (decision.optimized_queries[0] if decision.optimized_queries else req.query) if decision.need_search else None
     sources = []
 
     # Process user-provided or LLM-suggested links by fetching actual content
