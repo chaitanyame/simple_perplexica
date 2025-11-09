@@ -40,8 +40,19 @@ RERANK_DEFAULTS = {
 }
 
 
-async def get_sources(query: str, focus_mode: FocusMode):
+async def get_sources(query: str, focus_mode):
     """Fetch sources via SearxNG primary, SerperDev fallback - matching Perplexica."""
+    # Handle both string and enum focus modes for testing flexibility
+    if isinstance(focus_mode, str):
+        # Convert string to enum if needed
+        focus_mode_value = focus_mode
+        try:
+            focus_mode = FocusMode(focus_mode)
+        except ValueError:
+            focus_mode = FocusMode.webSearch
+    else:
+        focus_mode_value = focus_mode.value if hasattr(focus_mode, 'value') else str(focus_mode)
+
     cfg = FOCUS_MODE_ENGINES.get(focus_mode, {"searchWeb": True, "engines": []})
     # Always perform web search regardless of focusMode configuration
 
@@ -49,7 +60,7 @@ async def get_sources(query: str, focus_mode: FocusMode):
         "Fetching sources",
         extra={
             "query": query,
-            "focus_mode": focus_mode.value,
+            "focus_mode": focus_mode_value,
             "engines": cfg["engines"],
         },
     )
