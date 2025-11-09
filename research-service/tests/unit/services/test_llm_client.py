@@ -69,9 +69,7 @@ def mock_chat_response():
         choices=[
             Choice(
                 index=0,
-                message=ChatCompletionMessage(
-                    role="assistant", content="Test response from LLM"
-                ),
+                message=ChatCompletionMessage(role="assistant", content="Test response from LLM"),
                 finish_reason="stop",
             )
         ],
@@ -90,7 +88,9 @@ def mock_stream_chunks():
             model="anthropic/claude-3.5-sonnet",
             choices=[
                 ChunkChoice(
-                    index=0, delta=ChoiceDelta(role="assistant", content="Test "), finish_reason=None
+                    index=0,
+                    delta=ChoiceDelta(role="assistant", content="Test "),
+                    finish_reason=None,
                 )
             ],
         ),
@@ -108,9 +108,7 @@ def mock_stream_chunks():
             object="chat.completion.chunk",
             created=1234567890,
             model="anthropic/claude-3.5-sonnet",
-            choices=[
-                ChunkChoice(index=0, delta=ChoiceDelta(content=""), finish_reason="stop")
-            ],
+            choices=[ChunkChoice(index=0, delta=ChoiceDelta(content=""), finish_reason="stop")],
         ),
     ]
 
@@ -165,7 +163,9 @@ class TestOpenRouterClientChatCompletion:
 
         mock_openai_client.chat.completions.create = AsyncMock(return_value=mock_chat_response)
 
-        with patch("src.services.llm.openrouter_client.AsyncOpenAI", return_value=mock_openai_client):
+        with patch(
+            "src.services.llm.openrouter_client.AsyncOpenAI", return_value=mock_openai_client
+        ):
             client = OpenRouterClient(api_key="test-key")
             messages = [{"role": "user", "content": "Hello"}]
 
@@ -184,7 +184,9 @@ class TestOpenRouterClientChatCompletion:
 
         mock_openai_client.chat.completions.create = AsyncMock(return_value=mock_chat_response)
 
-        with patch("src.services.llm.openrouter_client.AsyncOpenAI", return_value=mock_openai_client):
+        with patch(
+            "src.services.llm.openrouter_client.AsyncOpenAI", return_value=mock_openai_client
+        ):
             client = OpenRouterClient(api_key="test-key")
             messages = [
                 {"role": "system", "content": "You are a helpful assistant."},
@@ -205,7 +207,9 @@ class TestOpenRouterClientChatCompletion:
 
         mock_openai_client.chat.completions.create = AsyncMock(return_value=mock_chat_response)
 
-        with patch("src.services.llm.openrouter_client.AsyncOpenAI", return_value=mock_openai_client):
+        with patch(
+            "src.services.llm.openrouter_client.AsyncOpenAI", return_value=mock_openai_client
+        ):
             client = OpenRouterClient(api_key="test-key")
             messages = [{"role": "user", "content": "Hello"}]
 
@@ -238,7 +242,9 @@ class TestOpenRouterClientStreaming:
 
         mock_openai_client.chat.completions.create = AsyncMock(return_value=mock_stream())
 
-        with patch("src.services.llm.openrouter_client.AsyncOpenAI", return_value=mock_openai_client):
+        with patch(
+            "src.services.llm.openrouter_client.AsyncOpenAI", return_value=mock_openai_client
+        ):
             client = OpenRouterClient(api_key="test-key")
             messages = [{"role": "user", "content": "Hello"}]
 
@@ -263,7 +269,9 @@ class TestOpenRouterClientStreaming:
 
         mock_openai_client.chat.completions.create = AsyncMock(return_value=mock_stream())
 
-        with patch("src.services.llm.openrouter_client.AsyncOpenAI", return_value=mock_openai_client):
+        with patch(
+            "src.services.llm.openrouter_client.AsyncOpenAI", return_value=mock_openai_client
+        ):
             client = OpenRouterClient(api_key="test-key")
             messages = [{"role": "user", "content": "Hello"}]
 
@@ -288,7 +296,9 @@ class TestOpenRouterClientErrorHandling:
             side_effect=_create_api_error("API Error occurred")
         )
 
-        with patch("src.services.llm.openrouter_client.AsyncOpenAI", return_value=mock_openai_client):
+        with patch(
+            "src.services.llm.openrouter_client.AsyncOpenAI", return_value=mock_openai_client
+        ):
             client = OpenRouterClient(api_key="test-key", max_retries=0)
             messages = [{"role": "user", "content": "Hello"}]
 
@@ -304,7 +314,9 @@ class TestOpenRouterClientErrorHandling:
             side_effect=APITimeoutError("Request timeout")
         )
 
-        with patch("src.services.llm.openrouter_client.AsyncOpenAI", return_value=mock_openai_client):
+        with patch(
+            "src.services.llm.openrouter_client.AsyncOpenAI", return_value=mock_openai_client
+        ):
             client = OpenRouterClient(api_key="test-key", max_retries=0)
             messages = [{"role": "user", "content": "Hello"}]
 
@@ -320,7 +332,9 @@ class TestOpenRouterClientErrorHandling:
             side_effect=_create_rate_limit_error("Rate limit exceeded")
         )
 
-        with patch("src.services.llm.openrouter_client.AsyncOpenAI", return_value=mock_openai_client):
+        with patch(
+            "src.services.llm.openrouter_client.AsyncOpenAI", return_value=mock_openai_client
+        ):
             client = OpenRouterClient(api_key="test-key", max_retries=0)
             messages = [{"role": "user", "content": "Hello"}]
 
@@ -352,7 +366,9 @@ class TestOpenRouterClientRetryLogic:
             ]
         )
 
-        with patch("src.services.llm.openrouter_client.AsyncOpenAI", return_value=mock_openai_client):
+        with patch(
+            "src.services.llm.openrouter_client.AsyncOpenAI", return_value=mock_openai_client
+        ):
             with patch("asyncio.sleep", new=AsyncMock()):  # Speed up tests
                 client = OpenRouterClient(api_key="test-key", max_retries=5)
                 messages = [{"role": "user", "content": "Hello"}]
@@ -371,7 +387,9 @@ class TestOpenRouterClientRetryLogic:
             side_effect=_create_api_error("Always fails")
         )
 
-        with patch("src.services.llm.openrouter_client.AsyncOpenAI", return_value=mock_openai_client):
+        with patch(
+            "src.services.llm.openrouter_client.AsyncOpenAI", return_value=mock_openai_client
+        ):
             with patch("asyncio.sleep", new=AsyncMock()) as mock_sleep:
                 client = OpenRouterClient(api_key="test-key", max_retries=3)
                 messages = [{"role": "user", "content": "Hello"}]
@@ -394,7 +412,9 @@ class TestOpenRouterClientRetryLogic:
             side_effect=_create_api_error("Always fails")
         )
 
-        with patch("src.services.llm.openrouter_client.AsyncOpenAI", return_value=mock_openai_client):
+        with patch(
+            "src.services.llm.openrouter_client.AsyncOpenAI", return_value=mock_openai_client
+        ):
             with patch("asyncio.sleep", new=AsyncMock()):
                 client = OpenRouterClient(api_key="test-key", max_retries=2)
                 messages = [{"role": "user", "content": "Hello"}]
@@ -402,7 +422,9 @@ class TestOpenRouterClientRetryLogic:
                 with pytest.raises(LLMClientError, match="Maximum.*retries"):
                     await client.chat(messages=messages, stream=False)
 
-                assert mock_openai_client.chat.completions.create.call_count == 3  # Initial + 2 retries
+                assert (
+                    mock_openai_client.chat.completions.create.call_count == 3
+                )  # Initial + 2 retries
 
     @pytest.mark.asyncio
     async def test_no_retry_on_bad_request(self, mock_openai_client):
@@ -413,7 +435,9 @@ class TestOpenRouterClientRetryLogic:
         error = _create_api_error("Bad request", status_code=400)
         mock_openai_client.chat.completions.create = AsyncMock(side_effect=error)
 
-        with patch("src.services.llm.openrouter_client.AsyncOpenAI", return_value=mock_openai_client):
+        with patch(
+            "src.services.llm.openrouter_client.AsyncOpenAI", return_value=mock_openai_client
+        ):
             client = OpenRouterClient(api_key="test-key", max_retries=5)
             messages = [{"role": "user", "content": "Hello"}]
 
@@ -434,7 +458,9 @@ class TestOpenRouterClientTokenManagement:
 
         mock_openai_client.chat.completions.create = AsyncMock(return_value=mock_chat_response)
 
-        with patch("src.services.llm.openrouter_client.AsyncOpenAI", return_value=mock_openai_client):
+        with patch(
+            "src.services.llm.openrouter_client.AsyncOpenAI", return_value=mock_openai_client
+        ):
             client = OpenRouterClient(api_key="test-key")
             messages = [{"role": "user", "content": "Hello"}]
 
@@ -476,7 +502,9 @@ class TestOpenRouterClientLogging:
         caplog.set_level(logging.INFO)
         mock_openai_client.chat.completions.create = AsyncMock(return_value=mock_chat_response)
 
-        with patch("src.services.llm.openrouter_client.AsyncOpenAI", return_value=mock_openai_client):
+        with patch(
+            "src.services.llm.openrouter_client.AsyncOpenAI", return_value=mock_openai_client
+        ):
             client = OpenRouterClient(api_key="test-key")
             messages = [{"role": "user", "content": "Hello"}]
 
@@ -498,7 +526,9 @@ class TestOpenRouterClientLogging:
             side_effect=[_create_api_error("Transient"), mock_chat_response]
         )
 
-        with patch("src.services.llm.openrouter_client.AsyncOpenAI", return_value=mock_openai_client):
+        with patch(
+            "src.services.llm.openrouter_client.AsyncOpenAI", return_value=mock_openai_client
+        ):
             with patch("asyncio.sleep", new=AsyncMock()):
                 client = OpenRouterClient(api_key="test-key", max_retries=5)
                 messages = [{"role": "user", "content": "Hello"}]
@@ -508,3 +538,60 @@ class TestOpenRouterClientLogging:
                 # Check log contains retry info
                 log_messages = [record.message for record in caplog.records]
                 assert any("Retry" in msg or "retry" in msg for msg in log_messages)
+
+
+class TestOpenRouterClientLangfuseIntegration:
+    """Test Langfuse tracing integration with OpenRouter client."""
+
+    @pytest.mark.asyncio
+    async def test_chat_with_langfuse_tracer(self, mock_openai_client, mock_chat_response):
+        """Test that chat calls are tracked with Langfuse tracer."""
+        from unittest.mock import MagicMock
+
+        from src.services.llm.langfuse_tracer import LangfuseTracer
+        from src.services.llm.openrouter_client import OpenRouterClient
+
+        # Create mock tracer
+        mock_tracer = MagicMock(spec=LangfuseTracer)
+        mock_tracer.track_generation = MagicMock()
+
+        mock_openai_client.chat.completions.create = AsyncMock(return_value=mock_chat_response)
+
+        with patch(
+            "src.services.llm.openrouter_client.AsyncOpenAI", return_value=mock_openai_client
+        ):
+            client = OpenRouterClient(api_key="test-key", tracer=mock_tracer)
+            messages = [{"role": "user", "content": "Hello"}]
+
+            await client.chat(messages=messages, stream=False)
+
+            # Verify tracer.track_generation was called
+            assert mock_tracer.track_generation.called
+            call_kwargs = mock_tracer.track_generation.call_args[1]
+            assert call_kwargs["name"] == "chat_completion"
+            assert call_kwargs["model"] == "anthropic/claude-3.5-sonnet"
+            assert call_kwargs["input_messages"] == messages
+            assert call_kwargs["output"] == "Test response from LLM"
+            assert call_kwargs["prompt_tokens"] == 10
+            assert call_kwargs["completion_tokens"] == 20
+            assert call_kwargs["total_tokens"] == 30
+
+    @pytest.mark.asyncio
+    async def test_chat_without_tracer(self, mock_openai_client, mock_chat_response):
+        """Test that chat works without tracer (tracer is optional)."""
+        from src.services.llm.openrouter_client import OpenRouterClient
+
+        mock_openai_client.chat.completions.create = AsyncMock(return_value=mock_chat_response)
+
+        with patch(
+            "src.services.llm.openrouter_client.AsyncOpenAI", return_value=mock_openai_client
+        ):
+            # No tracer provided
+            client = OpenRouterClient(api_key="test-key")
+            messages = [{"role": "user", "content": "Hello"}]
+
+            result = await client.chat(messages=messages, stream=False)
+
+            # Should work fine without tracer
+            assert result["content"] == "Test response from LLM"
+            assert result["usage"]["total_tokens"] == 30

@@ -13,6 +13,7 @@ from typing import Any
 from openai import APIError, APITimeoutError, AsyncOpenAI, RateLimitError
 
 from ...core.config import settings
+from .langfuse_tracer import LangfuseTracer
 from .schemas import LLMClientError
 
 logger = logging.getLogger(__name__)
@@ -49,6 +50,7 @@ class OpenRouterClient:
         max_delay: float = 300.0,
         exponential_base: float = 2.0,
         timeout: float = 60.0,
+        tracer: LangfuseTracer | None = None,
     ):
         """Initialize OpenRouter client.
 
@@ -60,13 +62,16 @@ class OpenRouterClient:
             max_delay: Maximum delay between retries (seconds)
             exponential_base: Base for exponential backoff calculation
             timeout: Request timeout (seconds)
+            tracer: Optional Langfuse tracer for monitoring
 
         Raises:
             ValueError: If API key is not provided
         """
         self.api_key = api_key or settings.OPENROUTER_API_KEY
         if not self.api_key:
-            raise ValueError("API key is required. Set OPENROUTER_API_KEY or pass api_key parameter.")
+            raise ValueError(
+                "API key is required. Set OPENROUTER_API_KEY or pass api_key parameter."
+            )
 
         self.base_url = base_url
         self.model = model
@@ -74,6 +79,7 @@ class OpenRouterClient:
         self.max_delay = max_delay
         self.exponential_base = exponential_base
         self.timeout = timeout
+        self.tracer = tracer
 
         self.client = AsyncOpenAI(
             api_key=self.api_key,
@@ -127,6 +133,7 @@ class OpenRouterClient:
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Execute non-streaming chat completion with retry logic."""
+
         async def _execute() -> dict[str, Any]:
             response = await self.client.chat.completions.create(
                 model=self.model,
@@ -149,6 +156,25 @@ class OpenRouterClient:
                 "model": response.model,  # type: ignore[union-attr]
                 "finish_reason": response.choices[0].finish_reason,  # type: ignore[union-attr]
             }
+
+            # Track generation if tracer available
+            if self.tracer:
+                self.tracer.track_generation(
+                    name="chat_completion",
+                    model=self.model,
+                    input_messages=messages,
+                    output=result["content"],
+                    prompt_tokens=result["usage"]["prompt_tokens"],
+                    completion_tokens=result["usage"]["completion_tokens"],
+                    total_tokens=result["usage"]["total_tokens"],
+                    metadata={
+                        "temperature": temperature,
+                        "max_tokens": max_tokens,
+                        "top_p": top_p,
+                        "finish_reason": result["finish_reason"],
+                    },
+                )
+
             return result
 
         return await self._retry_with_backoff(_execute)
@@ -162,6 +188,7 @@ class OpenRouterClient:
         **kwargs: Any,
     ) -> AsyncGenerator[dict[str, Any], None]:
         """Execute streaming chat completion with retry logic."""
+
         async def _execute() -> Any:
             return await self.client.chat.completions.create(
                 model=self.model,
@@ -216,14 +243,18 @@ class OpenRouterClient:
                     raise LLMClientError(f"Bad request: {e}") from e
 
                 if attempt < self.max_retries:
-                    logger.warning(f"Retry attempt {attempt + 1}/{self.max_retries} after error: {e}")
+                    logger.warning(
+                        f"Retry attempt {attempt + 1}/{self.max_retries} after error: {e}"
+                    )
                     await self._sleep_with_backoff(delay, attempt)
                     delay = min(delay * self.exponential_base, self.max_delay)
 
             except APITimeoutError as e:
                 last_error = e
                 if attempt < self.max_retries:
-                    logger.warning(f"Timeout on attempt {attempt + 1}/{self.max_retries}, retrying...")
+                    logger.warning(
+                        f"Timeout on attempt {attempt + 1}/{self.max_retries}, retrying..."
+                    )
                     await self._sleep_with_backoff(delay, attempt)
                     delay = min(delay * self.exponential_base, self.max_delay)
                 else:
@@ -232,11 +263,15 @@ class OpenRouterClient:
             except RateLimitError as e:
                 last_error = e
                 if attempt < self.max_retries:
-                    logger.warning(f"Rate limit hit on attempt {attempt + 1}/{self.max_retries}, backing off...")
+                    logger.warning(
+                        f"Rate limit hit on attempt {attempt + 1}/{self.max_retries}, backing off..."
+                    )
                     await self._sleep_with_backoff(delay, attempt)
                     delay = min(delay * self.exponential_base, self.max_delay)
                 else:
-                    raise LLMClientError(f"Rate limit exceeded after {self.max_retries} retries") from e
+                    raise LLMClientError(
+                        f"Rate limit exceeded after {self.max_retries} retries"
+                    ) from e
 
         # If we get here, all retries exhausted
         raise LLMClientError(
