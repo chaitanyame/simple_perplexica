@@ -14,7 +14,7 @@ class Settings(BaseSettings):
 
     # Redis Configuration
     REDIS_URL: RedisDsn = Field(
-        default="redis://localhost:6379/0", description="Redis connection URL"
+        default=RedisDsn("redis://localhost:6379/0"), description="Redis connection URL"
     )
 
     # OpenRouter (LLM)
@@ -94,4 +94,5 @@ class Settings(BaseSettings):
 
 
 # Global settings instance
-settings = Settings()
+# Type ignore: Settings() will read from .env file at runtime
+settings = Settings()  # type: ignore[call-arg]

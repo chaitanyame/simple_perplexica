@@ -1,5 +1,6 @@
 """Research Service - FastAPI Application Entry Point."""
 
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -10,7 +11,7 @@ from .core.config import settings
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifespan manager."""
     # Startup
     print(f"🚀 Research Service starting on port {settings.API_PORT}...")
@@ -48,11 +49,11 @@ app.add_middleware(
 
 # Health check endpoint
 @app.get("/api/v1/health", tags=["Health"])
-async def health_check():
+async def health_check() -> JSONResponse:
     """Health check endpoint.
 
     Returns:
-        dict: Service health status
+        JSONResponse: Service health status
     """
     return JSONResponse(
         content={
@@ -66,11 +67,11 @@ async def health_check():
 
 # Root endpoint
 @app.get("/", tags=["Root"])
-async def root():
+async def root() -> JSONResponse:
     """Root endpoint with service information.
 
     Returns:
-        dict: Service information and available endpoints
+        JSONResponse: Service information and available endpoints
     """
     return JSONResponse(
         content={

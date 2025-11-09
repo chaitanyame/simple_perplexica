@@ -216,14 +216,17 @@ async def test_session_document_relationship(async_session):
 
     await async_session.commit()
 
-    # Query session with documents
+    # Query session with documents using selectinload for async
+    from sqlalchemy.orm import selectinload
+
     result = await async_session.execute(
-        select(ResearchSession).where(ResearchSession.id == session.id)
+        select(ResearchSession)
+        .options(selectinload(ResearchSession.documents))
+        .where(ResearchSession.id == session.id)
     )
     loaded_session = result.scalar_one()
 
-    # Access relationship (will trigger lazy loading)
-    # Note: In real usage, use selectinload or joinedload for efficiency
+    # Access relationship (loaded eagerly with selectinload)
     assert len(loaded_session.documents) == 3
 
 

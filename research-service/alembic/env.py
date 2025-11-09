@@ -1,9 +1,17 @@
 """Alembic configuration."""
+# ruff: noqa: E402  # Module imports after sys.path manipulation
 
+import sys
 from logging.config import fileConfig
+from pathlib import Path
+
+from sqlalchemy import engine_from_config, pool
 
 from alembic import context
-from sqlalchemy import engine_from_config, pool
+
+# Add project root to Python path
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
 
 from src.core.config import settings
 from src.database.models import Base
@@ -11,8 +19,10 @@ from src.database.models import Base
 # this is the Alembic Config object
 config = context.config
 
-# Override sqlalchemy.url with our settings
-config.set_main_option("sqlalchemy.url", str(settings.DATABASE_URL))
+# Override sqlalchemy.url with our settings (use sync psycopg for migrations)
+# Convert asyncpg URL to psycopg for Alembic
+sync_url = str(settings.DATABASE_URL).replace("postgresql+asyncpg://", "postgresql+psycopg://")
+config.set_main_option("sqlalchemy.url", sync_url)
 
 # Interpret the config file for Python logging
 if config.config_file_name is not None:

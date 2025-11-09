@@ -20,7 +20,7 @@ def test_settings_with_defaults():
         },
         clear=True,
     ):
-        settings = Settings()
+        settings = Settings(_env_file=None)
 
         # Required fields
         assert str(settings.DATABASE_URL) == "postgresql+asyncpg://user:pass@localhost/dbname"
@@ -48,7 +48,7 @@ def test_settings_research_pipeline_defaults():
         },
         clear=True,
     ):
-        settings = Settings()
+        settings = Settings(_env_file=None)
 
         assert settings.RESEARCH_MAX_ITERATIONS == 3
         assert settings.RESEARCH_CRAWL_DEPTH == 2
@@ -68,7 +68,7 @@ def test_settings_search_mode_defaults():
         },
         clear=True,
     ):
-        settings = Settings()
+        settings = Settings(_env_file=None)
 
         assert settings.SEARCH_MAX_QUERIES == 4
         assert settings.SEARCH_MAX_SOURCES == 20
@@ -86,7 +86,7 @@ def test_settings_research_mode_defaults():
         },
         clear=True,
     ):
-        settings = Settings()
+        settings = Settings(_env_file=None)
 
         assert settings.RESEARCH_MAX_SOURCES == 80
         assert settings.RESEARCH_SECTION_SOURCES == 10
@@ -104,7 +104,7 @@ def test_settings_embedding_defaults():
         },
         clear=True,
     ):
-        settings = Settings()
+        settings = Settings(_env_file=None)
 
         assert settings.EMBEDDING_MODEL == "sentence-transformers/all-MiniLM-L6-v2"
         assert settings.EMBEDDING_DIMENSION == 384
@@ -122,7 +122,7 @@ def test_settings_llm_models_defaults():
         },
         clear=True,
     ):
-        settings = Settings()
+        settings = Settings(_env_file=None)
 
         assert settings.LLM_MODEL == "anthropic/claude-3.5-sonnet"
         assert settings.PLANNING_MODEL == "anthropic/claude-3.5-sonnet"
@@ -140,7 +140,7 @@ def test_settings_api_defaults():
         },
         clear=True,
     ):
-        settings = Settings()
+        settings = Settings(_env_file=None)
 
         assert settings.API_HOST == "0.0.0.0"
         assert settings.API_PORT == 8001
@@ -160,7 +160,7 @@ def test_settings_logging_defaults():
         },
         clear=True,
     ):
-        settings = Settings()
+        settings = Settings(_env_file=None)
 
         assert settings.LOG_LEVEL == "INFO"
         assert settings.LOG_FORMAT == "json"
@@ -186,7 +186,7 @@ def test_settings_custom_values():
         },
         clear=True,
     ):
-        settings = Settings()
+        settings = Settings(_env_file=None)
 
         assert "custom-host" in str(settings.DATABASE_URL)
         assert "custom-redis" in str(settings.REDIS_URL)
@@ -203,4 +203,4 @@ def test_settings_missing_required_field():
     """Test that missing required fields raise validation error."""
     with patch.dict(os.environ, {}, clear=True):
         with pytest.raises(Exception):  # ValidationError from Pydantic
-            Settings()
+            Settings(_env_file=None)

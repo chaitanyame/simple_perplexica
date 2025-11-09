@@ -1,9 +1,9 @@
 # Core dependencies
-fastapi==0.115.5
-uvicorn[standard]==0.32.1
-pydantic==2.10.2
-pydantic-settings==2.6.1
-pydantic-ai==0.0.14
+fastapi>=0.115.0,<0.116.0
+uvicorn[standard]>=0.32.0,<0.33.0
+pydantic>=2.10.0,<3.0.0  # Using 2.10+ for crawl4ai and pydantic-ai
+pydantic-settings>=2.6.0,<3.0.0
+pydantic-ai>=0.0.14,<0.1.0
 
 # AI & LLM
 openai==1.55.3  # For OpenRouter (OpenAI-compatible)
@@ -18,11 +18,11 @@ pgvector==0.3.6
 alembic==1.14.0
 
 # Crawling & Document Processing
-crawl4ai==0.4.249
-docling==2.14.0  # Dockling for PDF/Excel/Word extraction
+crawl4ai==0.7.6  # Latest version compatible with Python 3.13
+docling==2.18.0  # Latest version compatible with Python 3.13
 beautifulsoup4==4.12.3
 trafilatura==1.12.2
-playwright==1.48.0  # For JS-heavy sites
+# playwright will be installed by crawl4ai (requires >=1.49.0)
 
 # HTTP & Networking
 httpx==0.28.0

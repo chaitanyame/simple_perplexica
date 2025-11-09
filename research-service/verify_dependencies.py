@@ -36,24 +36,20 @@ def parse_requirements(file_path: Path) -> dict[str, str]:
 
 def get_installed_versions() -> dict[str, str]:
     """Get currently installed package versions."""
-    result = subprocess.run(
-        ["pip", "list", "--format=json"],
-        capture_output=True,
-        text=True
-    )
+    result = subprocess.run(["pip", "list", "--format=json"], capture_output=True, text=True)
 
     if result.returncode != 0:
         print(f"Error running pip list: {result.stderr}")
         sys.exit(1)
 
     import json
+
     packages = json.loads(result.stdout)
     return {pkg["name"].lower(): pkg["version"] for pkg in packages}
 
 
 def compare_versions(
-    required: dict[str, str],
-    installed: dict[str, str]
+    required: dict[str, str], installed: dict[str, str]
 ) -> tuple[list[str], list[str], list[str]]:
     """
     Compare required and installed versions.
@@ -72,8 +68,7 @@ def compare_versions(
             missing.append(f"{package}=={required_version}")
         elif installed[package_lower] != required_version:
             mismatched.append(
-                f"{package}: required {required_version}, "
-                f"installed {installed[package_lower]}"
+                f"{package}: required {required_version}, installed {installed[package_lower]}"
             )
         else:
             matching.append(package)
@@ -97,7 +92,9 @@ def main():
     # Parse requirements
     print("📄 Parsing requirements files...")
     prod_requirements = parse_requirements(requirements_txt)
-    dev_requirements = parse_requirements(requirements_dev_txt) if requirements_dev_txt.exists() else {}
+    dev_requirements = (
+        parse_requirements(requirements_dev_txt) if requirements_dev_txt.exists() else {}
+    )
 
     print(f"   Production packages: {len(prod_requirements)}")
     print(f"   Development packages: {len(dev_requirements)}")
@@ -143,7 +140,7 @@ def main():
                 print(f"      - {mismatch}")
 
     # Summary
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     total_missing = len(missing) + len(missing_dev)
     total_mismatched = len(mismatched) + len(mismatched_dev)
 

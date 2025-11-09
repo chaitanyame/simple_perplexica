@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from pgvector.sqlalchemy import Vector
+from pgvector.sqlalchemy import Vector  # type: ignore[import-untyped]
 from sqlalchemy import (
     JSON,
     Boolean,
@@ -62,7 +62,7 @@ class RAGDocument(Base):
     source_type: Mapped[str] = mapped_column(
         String(20), nullable=False, index=True
     )  # 'web', 'pdf', 'excel', 'word'
-    metadata: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    doc_metadata: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     embedding: Mapped[Any] = mapped_column(Vector(384), nullable=False)
     token_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)

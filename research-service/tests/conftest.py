@@ -1,7 +1,10 @@
 """Pytest configuration for tests."""
+# ruff: noqa: E402  # Module imports after sys.path manipulation
 
 import asyncio
+import sys
 from collections.abc import AsyncGenerator
+from pathlib import Path
 
 import pytest
 import pytest_asyncio
@@ -9,10 +12,17 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import NullPool
 
+# Add project root to Python path
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
+
 from src.database.models import Base
 
-# Test database URL (use in-memory SQLite or test PostgreSQL)
-TEST_DATABASE_URL = "postgresql+asyncpg://postgres:postgres@localhost:5432/research_test"
+# Test database URL (use same credentials as main DB for now)
+# TODO: Create separate test database in future
+TEST_DATABASE_URL = (
+    "postgresql+asyncpg://research_user:your_secure_password_here@localhost:5432/research_db"
+)
 
 
 @pytest.fixture(scope="session")
