@@ -107,7 +107,9 @@ class AnswerOutput(BaseModel):
     - citations: list of source URLs used in the answer
     """
 
-    answer: str = Field(description="Comprehensive, detailed research-style answer for the user with extensive analysis and depth.")
+    answer: str = Field(
+        description="Comprehensive, detailed research-style answer for the user with extensive analysis and depth."
+    )
     citations: List[str] = Field(
         default_factory=list,
         description="List of citation URLs referenced in the answer.",
@@ -355,7 +357,9 @@ def _build_agent(system_instructions: str | None, deps: AnswerDeps) -> Agent:
                     for u in output.citations
                     if (not ctx.deps.allowed_urls) or (u in ctx.deps.allowed_urls)
                 ][:10]  # Increased from 5 to 10 for more sources
-            if len(output.answer) > 20000:  # Increased from 4000 to 20000 for deep research
+            if (
+                len(output.answer) > 20000
+            ):  # Increased from 4000 to 20000 for deep research
                 output.answer = output.answer[:20000].rstrip() + "…"
             return output
 
