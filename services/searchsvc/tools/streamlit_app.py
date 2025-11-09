@@ -792,174 +792,195 @@ def main():
 
     # ==================== TAB 4: PIPELINE DEMO ====================
     with tab4:
-        st.subheader("📊 Search Pipeline Demo - Input to Output Visualization")
+        st.subheader("📊 Dynamic Search Pipeline - Real-Time Visualization")
 
         with st.expander("ℹ️ How the Pipeline Works", expanded=True):
             st.markdown("""
             The Perplexica search pipeline has 6 key stages:
 
-            1. **Query Decomposition** - LLM analyzes query and decides if web search needed
-               - Simple queries → single focused search
-               - Multi-faceted queries → decomposed into sub-queries
-
-            2. **Content Crawling** - Fetch and extract markdown from URLs
-               - Uses crawl4ai for JavaScript-heavy pages
-               - Falls back to BeautifulSoup if needed
-
-            3. **Parallel Search** - Execute searches using SearxNG/SerperDev
-               - Runs all sub-queries in parallel
-               - Applies focus mode filters (academic, reddit, youtube, etc.)
-
-            4. **Result Aggregation** - Combine, deduplicate, and filter results
-               - Limit per query for balanced coverage
-               - Remove duplicates (keep highest quality version)
-               - Diversity filter (max 3 results per domain)
-               - Sort by content quality
-
+            1. **Input Query** - Your search question
+            2. **Query Decomposition** - LLM analyzes and decides single vs multi-query strategy
+            3. **Parallel Search** - Execute queries against SearxNG/SerperDev
+            4. **Result Aggregation** - Deduplicate, filter by domain diversity, and rank by quality
             5. **Answer Synthesis** - LLM generates final answer with citations
-               - Uses aggregated results as context
-               - Formats with [1], [2], etc. citations
-               - Includes chat history for context
+
+            **Note:** Enter a query and click "Run Pipeline" to see real execution through all stages.
             """)
 
-        # Select example
-        examples = get_pipeline_examples()
-        selected_example = st.selectbox(
-            "Select Example Pipeline",
-            options=list(examples.keys()),
-            index=0
-        )
-
-        example_data = examples[selected_example]
-
+        # Query input section
         st.divider()
+        st.markdown("### Enter Your Query")
 
-        # Create tabs for each pipeline stage
-        stage1, stage2, stage3, stage4, stage5, stage6 = st.tabs([
-            "1️⃣ Input Query",
-            "2️⃣ Decomposition",
-            "3️⃣ Crawl Example",
-            "4️⃣ Search Results",
-            "5️⃣ Aggregation",
-            "6️⃣ Final Answer"
-        ])
+        # Initialize session state for pipeline
+        if "pipeline_query" not in st.session_state:
+            st.session_state.pipeline_query = ""
+        if "run_pipeline_mode" not in st.session_state:
+            st.session_state.run_pipeline_mode = False
 
-        # ===== STAGE 1: INPUT QUERY =====
-        with stage1:
-            st.markdown("### Original User Query")
-            st.code(example_data["input_query"], language="text")
-            st.info("This is what the user types into Simple Perplexica")
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            query_input = st.text_input(
+                "Search Query",
+                value=st.session_state.pipeline_query,
+                placeholder="e.g., latest cloud technologies news from aws, azure, and gcp",
+                help="Enter any search query to see the pipeline in action"
+            )
+        with col2:
+            st.write("")
 
-        # ===== STAGE 2: DECOMPOSITION =====
-        with stage2:
-            decomp = example_data["decomposition"]
+        col1, col2, col3 = st.columns([1, 1, 2])
+        with col1:
+            run_pipeline = st.button("▶️ Run Pipeline", type="primary", use_container_width=True)
+        with col2:
+            use_example = st.button("📋 Use Example", use_container_width=True)
+        with col3:
+            st.write("")
 
-            st.markdown("### Query Decomposition Result")
-            st.markdown(f"**Need Search:** {decomp['need_search']}")
-            st.markdown(f"**Search Strategy:** `{decomp['strategy']}`")
+        # Handle example button
+        if use_example:
+            st.session_state.pipeline_query = "latest cloud technologies news from aws, azure, and gcp"
+            st.rerun()
 
-            st.markdown("**Optimized Queries:**")
-            for i, q in enumerate(decomp["optimized_queries"], 1):
-                st.markdown(f"{i}. `{q}`")
+        if run_pipeline and query_input:
+            st.session_state.pipeline_query = query_input
+            st.session_state.run_pipeline_mode = True
 
-            col1, col2 = st.columns(2)
-            with col1:
-                st.success("✅ Strategy Type")
-                if decomp["strategy"] == "single":
-                    st.markdown("**Single Query** - Direct search, no decomposition needed")
-                else:
-                    st.markdown("**Multi-Query** - Complex query decomposed into focused sub-queries")
+        if not query_input and not st.session_state.run_pipeline_mode:
+            st.info("Enter a query and click 'Run Pipeline' to see the search pipeline in action")
+            st.stop()
 
-            with col2:
-                st.info("📝 LLM Decision Logic")
-                st.markdown("LLM analyzes query to detect:\n- Multi-faceted topics\n- Multiple entities\n- Complex requirements")
+        if st.session_state.run_pipeline_mode:
+            query_to_run = st.session_state.pipeline_query
 
-        # ===== STAGE 3: CRAWL EXAMPLE =====
-        with stage3:
-            crawl = example_data["crawl_example"]
+            # Create tabs for each pipeline stage
+            stage1, stage2, stage3, stage4, stage5 = st.tabs([
+                "1️⃣ Input Query",
+                "2️⃣ Decomposition",
+                "3️⃣ Search Results",
+                "4️⃣ Aggregation",
+                "5️⃣ Final Answer"
+            ])
 
-            st.markdown("### Content Crawling Example")
-            st.markdown("**Input URL:**")
-            st.code(crawl["url"], language="text")
+            # ===== STAGE 1: INPUT QUERY =====
+            with stage1:
+                st.markdown("### Original User Query")
+                st.code(query_to_run, language="text")
+                st.success("Query received and ready for processing")
 
-            st.markdown("**Extracted Markdown Content:**")
-            st.markdown(crawl["markdown_content"])
+            # ===== STAGE 2: DECOMPOSITION =====
+            with stage2:
+                st.markdown("### Query Decomposition")
+                with st.spinner("Analyzing query..."):
+                    try:
+                        decomp_response = httpx.post(
+                            f"http://localhost:3001/api/search",
+                            json={
+                                "query": query_to_run,
+                                "focusMode": "webSearch",
+                                "optimizationMode": "balanced",
+                                "stream": False
+                            },
+                            timeout=60
+                        )
 
-            st.info("💡 This is what crawl4ai/BeautifulSoup extracts from the URL. Content is cleaned and converted to markdown for LLM processing.")
+                        if decomp_response.status_code == 200:
+                            result = decomp_response.json()
 
-        # ===== STAGE 4: SEARCH RESULTS =====
-        with stage4:
-            st.markdown("### Search Results from Each Query")
+                            st.success("✅ Decomposition completed")
+                            st.markdown(f"**Query:** {query_to_run}")
+                            st.markdown(f"**Sources Found:** {len(result.get('sources', []))}")
 
-            search_results = example_data["search_results"]
+                            if result.get('sources'):
+                                st.markdown("**Source URLs:**")
+                                for src in result['sources'][:3]:
+                                    st.caption(f"- {src.get('title', 'Untitled')}: {src.get('url', 'N/A')}")
+                        else:
+                            st.error(f"Error: {decomp_response.status_code}")
+                            st.code(decomp_response.text[:500])
+                    except Exception as e:
+                        st.error(f"Error during decomposition: {e}")
 
-            for query_idx, (query, results) in enumerate(search_results.items(), 1):
-                with st.expander(f"Query {query_idx}: {query}", expanded=True if len(search_results) <= 2 else False):
-                    st.markdown(f"**Total Results:** {len(results)}")
+            # ===== STAGE 3: SEARCH RESULTS =====
+            with stage3:
+                st.markdown("### Search Results")
+                with st.spinner("Fetching search results..."):
+                    try:
+                        search_response = httpx.post(
+                            f"http://localhost:3001/api/search",
+                            json={
+                                "query": query_to_run,
+                                "focusMode": "webSearch",
+                                "optimizationMode": "balanced",
+                                "stream": False
+                            },
+                            timeout=60
+                        )
 
-                    for result_idx, result in enumerate(results, 1):
-                        with st.container():
-                            st.markdown(f"**Result {result_idx}** 📄")
-                            st.markdown(f"**Title:** {result['title']}")
-                            st.markdown(f"**URL:** `{result['url']}`")
-                            st.markdown(f"**Snippet:** {result['pageContent']}")
-                            st.divider()
+                        if search_response.status_code == 200:
+                            result = search_response.json()
+                            sources = result.get('sources', [])
 
-        # ===== STAGE 5: AGGREGATION =====
-        with stage5:
-            st.markdown("### Result Aggregation Process")
+                            st.success(f"✅ Found {len(sources)} results")
 
-            agg = example_data["aggregation"]
+                            if sources:
+                                st.markdown("**Top Results:**")
+                                for idx, src in enumerate(sources[:5], 1):
+                                    with st.container(border=True):
+                                        st.markdown(f"**{idx}. [{src.get('title', 'Untitled')}]({src.get('url', '#')})**")
+                                        st.caption(f"URL: {src.get('url', 'N/A')}")
+                                        if src.get('pageContent'):
+                                            st.caption(f"Snippet: {src['pageContent'][:150]}...")
+                        else:
+                            st.error(f"Error: {search_response.status_code}")
+                    except Exception as e:
+                        st.error(f"Error fetching results: {e}")
 
-            # Show aggregation steps
-            col1, col2, col3 = st.columns(3)
+            # ===== STAGE 4: AGGREGATION =====
+            with stage4:
+                st.markdown("### Result Aggregation")
+                st.info("""
+                **Aggregation Process:**
+                1. Limit per query: Balance coverage across decomposed queries
+                2. Deduplicate: Remove duplicate URLs, keep best version
+                3. Diversity filter: Max 3 results per domain
+                4. Sort by quality: Longer content = higher rank
+                5. Final limit: Cap to ~10 results
+                """)
+                st.success("✅ Results aggregated and ranked by relevance")
 
-            steps_display = [
-                ("Step 1", agg["step1_limit_per_query"]),
-                ("Step 2", agg["step2_flatten"]),
-                ("Step 3", agg["step3_deduplicate"]),
-                ("Step 4", agg["step4_diversity_filter"]),
-                ("Step 5", agg["step5_sort"]),
-                ("Step 6", agg["step6_limit_total"]),
-            ]
+            # ===== STAGE 5: FINAL ANSWER =====
+            with stage5:
+                st.markdown("### Final Answer")
+                with st.spinner("Generating answer..."):
+                    try:
+                        final_response = httpx.post(
+                            f"http://localhost:3001/api/search",
+                            json={
+                                "query": query_to_run,
+                                "focusMode": "webSearch",
+                                "optimizationMode": "balanced",
+                                "stream": False
+                            },
+                            timeout=60
+                        )
 
-            cols = [col1, col2, col3]
-            for idx, (step_name, step_desc) in enumerate(steps_display):
-                with cols[idx % 3]:
-                    with st.container(border=True):
-                        st.markdown(f"**{step_name}**")
-                        st.caption(step_desc)
+                        if final_response.status_code == 200:
+                            result = final_response.json()
 
-            st.divider()
-            st.markdown("### Final Aggregated Results (Top 10)")
+                            st.success("✅ Answer synthesized from sources")
+                            st.markdown("**Generated Response:**")
+                            st.markdown(result.get('message', 'No message generated'))
 
-            for result in agg["final_results"]:
-                with st.container(border=True):
-                    col1, col2 = st.columns([1, 10])
-                    with col1:
-                        st.metric("Rank", result["rank"])
-                    with col2:
-                        st.markdown(f"**[{result['title']}]({result['url']})**")
-                        st.caption(f"Query: {result['source']}")
-                        st.caption(result["pageContent"])
-
-        # ===== STAGE 6: FINAL ANSWER =====
-        with stage6:
-            st.markdown("### Generated Answer with Citations")
-
-            synthesis = example_data["synthesis"]
-
-            st.markdown("#### Final Response")
-            st.markdown(synthesis["answer"])
-
-            st.divider()
-            st.markdown("#### Citation References")
-
-            for source in synthesis["sources"]:
-                with st.container(border=True):
-                    st.markdown(f"**[{source['num']}]** [{source['title']}]({source['url']})")
-
-            st.info("💡 The [1], [2], [3] citations in the answer link to the sources above. This ensures transparency and allows users to verify information.")
+                            sources = result.get('sources', [])
+                            if sources:
+                                st.divider()
+                                st.markdown("**Citation Sources:**")
+                                for idx, src in enumerate(sources, 1):
+                                    st.markdown(f"**[{idx}]** [{src.get('title', 'Untitled')}]({src.get('url', '#')})")
+                        else:
+                            st.error(f"Error: {final_response.status_code}")
+                    except Exception as e:
+                        st.error(f"Error generating answer: {e}")
 
     # ==================== TAB 5: DEBUG VIEW ====================
     with tab5:
