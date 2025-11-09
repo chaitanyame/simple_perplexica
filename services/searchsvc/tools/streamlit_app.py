@@ -426,7 +426,7 @@ def main():
     st.caption("Test search and research services")
 
     # Create tabs for different services
-    tab1, tab2, tab3, tab4 = st.tabs(["🔍 Search Service", "📝 Research Service", "🧪 Test Runner", "📊 Pipeline Demo"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["🔍 Search Service", "📝 Research Service", "🧪 Test Runner", "📊 Pipeline Demo", "🐛 Debug View"])
 
     # ==================== TAB 1: SEARCH SERVICE ====================
     with tab1:
@@ -960,6 +960,145 @@ def main():
                     st.markdown(f"**[{source['num']}]** [{source['title']}]({source['url']})")
 
             st.info("💡 The [1], [2], [3] citations in the answer link to the sources above. This ensures transparency and allows users to verify information.")
+
+    # ==================== TAB 5: DEBUG VIEW ====================
+    with tab5:
+        st.subheader("🐛 Debug View - Pipeline Execution Analysis")
+
+        with st.expander("ℹ️ What This Shows", expanded=True):
+            st.markdown("""
+            This debug view helps identify gaps between the **Pipeline Demo** (expected behavior)
+            and actual **Search Service** execution.
+
+            **Current Issue:** Search endpoint only executes first optimized query, ignoring multi-query decomposition.
+
+            **Root Cause:** In `search.py:238-239`:
+            ```python
+            # For now, use first query for backward compatibility
+            effective_query = (decision.optimized_queries[0] if decision.optimized_queries else req.query)
+            ```
+
+            Only `optimized_queries[0]` is used. The rest are ignored!
+            """)
+
+        st.divider()
+        st.markdown("### 📊 Problem Demonstration")
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.markdown("#### Expected (Pipeline Demo) ✅")
+            st.code("""
+Query: "aws, azure, gcp news"
+    ↓
+Decomposed:
+  1. AWS cloud latest news
+  2. Azure cloud latest news
+  3. GCP cloud latest news
+    ↓
+Parallel Search:
+  Query 1 → 5 results
+  Query 2 → 5 results
+  Query 3 → 5 results
+    ↓
+Aggregation:
+  - Deduplicate URLs
+  - Diversity filter (max 3/domain)
+    ↓
+Final: 10 balanced results
+  - 3-4 AWS
+  - 3-4 Azure
+  - 3-4 GCP
+            """, language="text")
+
+        with col2:
+            st.markdown("#### Actual (Current) ❌")
+            st.code("""
+Query: "aws, azure, gcp news"
+    ↓
+Decomposed:
+  1. AWS cloud latest news    ← USED
+  2. Azure cloud latest news  ← IGNORED
+  3. GCP cloud latest news    ← IGNORED
+    ↓
+Search Only:
+  Uses optimized_queries[0]
+    ↓
+Search Results:
+  Only AWS results returned
+    ↓
+Final: AWS-only results
+  - ~10 AWS articles
+  - 0 Azure
+  - 0 GCP
+            """, language="text")
+
+        st.divider()
+        st.markdown("### 🔧 What Needs to Change")
+
+        st.info("""
+        **File:** `services/searchsvc/app/routers/search.py`
+
+        **Current Code (Line 238-239):**
+        ```python
+        effective_query = (decision.optimized_queries[0] if decision.optimized_queries else req.query)
+        sources = []
+        fetched = await get_sources(effective_query, req.focusMode)
+        ```
+
+        **Should Be:**
+        ```python
+        # Execute ALL optimized queries in parallel
+        if decision.search_strategy == "multi" and len(decision.optimized_queries) > 1:
+            # Parallel multi-query search
+            all_results = []
+            for query in decision.optimized_queries:
+                fetched = await get_sources(query, req.focusMode)
+                all_results.extend(fetched)
+            # Aggregation: deduplicate, diversity filter, etc.
+            sources = aggregate_results(all_results, strategy="multi")
+        else:
+            # Single query search (existing behavior)
+            effective_query = decision.optimized_queries[0] if decision.optimized_queries else req.query
+            sources = await get_sources(effective_query, req.focusMode)
+        ```
+        """)
+
+        st.divider()
+        st.markdown("### 📋 Implementation Checklist")
+
+        st.markdown("""
+        - [ ] Implement multi-query parallel search in `search.py`
+        - [ ] Add result aggregation (deduplicate, diversity filter)
+        - [ ] Test with multi-query decomposition queries
+        - [ ] Verify results are balanced across all queries
+        - [ ] Update API response to show which queries were executed
+        - [ ] Log decomposition strategy and query execution
+
+        **Expected Behavior After Fix:**
+        - Query: "aws, azure, gcp news"
+        - Results: Balanced mix of AWS, Azure, GCP articles
+        - Sources: Visible in UI showing which query returned each result
+        """)
+
+        st.divider()
+        st.markdown("### 🎯 Test Query to Verify")
+
+        st.code("""
+Query: "latest cloud technologies news from aws, azure, and gcp"
+
+Expected Result (after fix):
+- Title: AWS announces new EC2 instances
+  URL: https://aws.amazon.com/...
+
+- Title: Azure Compute Updates 2024
+  URL: https://azure.microsoft.com/...
+
+- Title: GCP Compute Engine Updates
+  URL: https://cloud.google.com/...
+
+(Results should be balanced across all 3 cloud providers)
+        """, language="text")
 
 
 if __name__ == "__main__":
