@@ -346,6 +346,7 @@ async def search(req: SearchRequest, request: Request):
         if search_strategy == "multi" and len(decision.optimized_queries) > 1:
             # MULTI-QUERY: Execute all queries in parallel and aggregate
             all_results = []
+            effective_query = req.query  # Original query for context
 
             logger.info(
                 "Multi-query search initiated",
