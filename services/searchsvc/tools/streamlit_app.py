@@ -1,6 +1,8 @@
 import os
 import json
-from typing import Iterator, Optional
+import subprocess
+import re
+from typing import Iterator, Optional, Dict, List, Tuple
 
 import httpx
 import streamlit as st
@@ -89,16 +91,96 @@ def post_generate_content(
     return httpx.post(url, json=payload, timeout=300)
 
 
+def run_pytest_tests(test_path: str, verbose: bool = True) -> Tuple[int, str, str]:
+    """
+    Run pytest tests and return exit code, stdout, and stderr.
+
+    Args:
+        test_path: Path to test file or directory
+        verbose: Whether to run with verbose output
+
+    Returns:
+        Tuple of (exit_code, stdout, stderr)
+    """
+    try:
+        cmd = ["python", "-m", "pytest", test_path]
+        if verbose:
+            cmd.append("-v")
+        cmd.extend(["--tb=short", "--no-header"])
+
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+        return result.returncode, result.stdout, result.stderr
+    except subprocess.TimeoutExpired:
+        return 1, "", "Test execution timed out (5 minutes)"
+    except Exception as e:
+        return 1, "", str(e)
+
+
+def parse_pytest_output(output: str) -> List[Dict]:
+    """
+    Parse pytest output to extract individual test results.
+
+    Args:
+        output: Raw pytest output
+
+    Returns:
+        List of test results with status, name, and duration
+    """
+    tests = []
+
+    # Pattern to match test results: "tests/path/to/test.py::test_name PASSED [50%]"
+    pattern = r'(tests/[^\s]+::[^\s]+)\s+(PASSED|FAILED|SKIPPED|ERROR)\s+\[\s*(\d+)%\]'
+
+    for match in re.finditer(pattern, output):
+        test_name = match.group(1)
+        status = match.group(2)
+
+        # Extract duration if available
+        duration = ""
+        duration_pattern = rf'{re.escape(test_name)}.*?{status}\s+\[\s*\d+%\]\s+(\d+\.\d+s)'
+        duration_match = re.search(duration_pattern, output)
+        if duration_match:
+            duration = duration_match.group(1)
+
+        tests.append({
+            "name": test_name,
+            "status": status,
+            "duration": duration,
+        })
+
+    return tests
+
+
+def get_test_files(base_path: str = ".") -> Dict[str, str]:
+    """Get available test files with descriptions."""
+    return {
+        "Phase 1: crawl4ai Integration": "tests/unit/test_crawl_wrapper.py",
+        "Phase 1: Fallback BeautifulSoup": "tests/unit/test_crawl_fallback.py",
+        "Phase 2a: Models & Decomposition": "tests/unit/test_models_decomposition.py",
+        "Phase 2a: Query Decomposition": "tests/unit/test_query_decomposition.py",
+        "Phase 2b-c: Result Aggregator": "tests/unit/test_result_aggregator.py",
+        "Phase 2b-c: Parallel Search": "tests/unit/test_parallel_search.py",
+        "Phase 2d-e: Multi-Query Reranking": "tests/unit/test_multi_query_reranking.py",
+        "Phase 2d-e: Synthesis Enhancement": "tests/unit/test_synthesis_enhancement.py",
+        "Phase 3: Caching": "tests/unit/test_caching.py",
+        "Phase 4: E2E Integration": "tests/integration/test_e2e_integration.py",
+        "All Unit Tests": "tests/unit/",
+        "All Tests": "tests/",
+    }
+
+
 def main():
     st.set_page_config(page_title="API Tester", layout="wide")
     st.title("Simple Perplexica API Tester")
     st.caption("Test search and research services")
 
     # Create tabs for different services
-    tab1, tab2 = st.tabs(["🔍 Search Service", "📝 Research Service"])
-
-    # Create tabs for different services
-    tab1, tab2 = st.tabs(["🔍 Search Service", "📝 Research Service"])
+    tab1, tab2, tab3 = st.tabs(["🔍 Search Service", "📝 Research Service", "🧪 Test Runner"])
 
     # ==================== TAB 1: SEARCH SERVICE ====================
     with tab1:
@@ -328,6 +410,122 @@ def main():
                         )
                     except Exception as e:
                         st.error(f"❌ Request error: {e}")
+
+    # ==================== TAB 3: TEST RUNNER ====================
+    with tab3:
+        st.subheader("🧪 Test Suite Runner")
+
+        with st.expander("ℹ️ About Tests", expanded=True):
+            st.markdown("""
+            **Comprehensive Test Suite:** 137 tests across 4 phases
+
+            - **Phase 1:** crawl4ai integration & fallback (32 tests)
+            - **Phase 2a:** Query decomposition models (29 tests)
+            - **Phase 2b-c:** Result aggregation & parallel search (24 tests)
+            - **Phase 2d-e:** Reranking & synthesis (25 tests)
+            - **Phase 3:** Caching enhancements (12 tests)
+            - **Phase 4:** End-to-end integration (15 tests)
+
+            Each test can be run individually or in groups. Results will show detailed status for each test.
+            """)
+
+        col1, col2 = st.columns([2, 1])
+
+        with col1:
+            test_files = get_test_files()
+            selected_test = st.selectbox(
+                "Select Tests to Run",
+                options=list(test_files.keys()),
+                index=10,  # Default to "All Unit Tests"
+            )
+
+        with col2:
+            run_verbose = st.checkbox("Verbose Output", value=True)
+
+        st.divider()
+
+        # Run button
+        if st.button("▶️ Run Tests", type="primary", use_container_width=True):
+            test_path = test_files[selected_test]
+
+            with st.spinner(f"Running {selected_test}..."):
+                exit_code, stdout, stderr = run_pytest_tests(test_path, verbose=run_verbose)
+
+            st.divider()
+
+            # Display summary
+            if exit_code == 0:
+                st.success(f"✅ All tests passed!")
+            else:
+                st.error(f"❌ Some tests failed (exit code: {exit_code})")
+
+            # Parse and display individual test results
+            tests = parse_pytest_output(stdout)
+
+            if tests:
+                st.subheader(f"Test Results ({len(tests)} tests)")
+
+                # Create columns for better layout
+                col_name, col_status, col_duration = st.columns([3, 1, 1])
+
+                with col_name:
+                    st.markdown("**Test Name**")
+                with col_status:
+                    st.markdown("**Status**")
+                with col_duration:
+                    st.markdown("**Duration**")
+
+                st.divider()
+
+                # Display each test
+                for test in tests:
+                    col_name, col_status, col_duration = st.columns([3, 1, 1])
+
+                    with col_name:
+                        st.code(test["name"], language="text")
+
+                    with col_status:
+                        status = test["status"]
+                        if status == "PASSED":
+                            st.success("✅ PASSED")
+                        elif status == "FAILED":
+                            st.error("❌ FAILED")
+                        elif status == "SKIPPED":
+                            st.warning("⏭️ SKIPPED")
+                        else:
+                            st.info(f"ℹ️ {status}")
+
+                    with col_duration:
+                        if test["duration"]:
+                            st.caption(test["duration"])
+
+            # Show summary statistics
+            if tests:
+                st.divider()
+
+                passed = sum(1 for t in tests if t["status"] == "PASSED")
+                failed = sum(1 for t in tests if t["status"] == "FAILED")
+                skipped = sum(1 for t in tests if t["status"] == "SKIPPED")
+
+                col1, col2, col3, col4 = st.columns(4)
+
+                with col1:
+                    st.metric("Total Tests", len(tests))
+                with col2:
+                    st.metric("Passed ✅", passed)
+                with col3:
+                    st.metric("Failed ❌", failed)
+                with col4:
+                    st.metric("Skipped ⏭️", skipped)
+
+            # Show detailed output in expanders
+            if stdout:
+                with st.expander("📋 Full pytest Output"):
+                    st.code(stdout, language="text")
+
+            if stderr:
+                with st.expander("⚠️ Error Output"):
+                    st.code(stderr, language="text")
 
 
 if __name__ == "__main__":
