@@ -120,7 +120,7 @@ class OpenRouterClient:
 
         if stream:
             # Return async generator directly
-            return self._chat_stream(messages, temperature, max_tokens, top_p, **kwargs)  # type: ignore[return-value]
+            return self._chat_stream(messages, temperature, max_tokens, top_p, **kwargs)
         else:
             return await self._chat_non_stream(messages, temperature, max_tokens, top_p, **kwargs)
 
@@ -177,7 +177,8 @@ class OpenRouterClient:
 
             return result
 
-        return await self._retry_with_backoff(_execute)
+        result_dict: dict[str, Any] = await self._retry_with_backoff(_execute)
+        return result_dict
 
     async def _chat_stream(
         self,
