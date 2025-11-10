@@ -26,8 +26,8 @@ from src.agents.search_agent import (
     SearchSource,
     SubQuery,
 )
-from src.services.llm.openrouter_client import OpenRouterClient
 from src.services.llm.langfuse_tracer import LangfuseTracer
+from src.services.llm.openrouter_client import OpenRouterClient
 
 
 @pytest.fixture
@@ -76,9 +76,7 @@ def search_agent_deps(
 class TestSearchAgentInitialization:
     """Test SearchAgent initialization and setup."""
 
-    def test_search_agent_initialization(
-        self, search_agent_deps: SearchAgentDeps
-    ) -> None:
+    def test_search_agent_initialization(self, search_agent_deps: SearchAgentDeps) -> None:
         """Test that SearchAgent initializes with correct dependencies.
 
         Given: Valid SearchAgentDeps
@@ -121,9 +119,7 @@ class TestQueryDecomposition:
     """Test query decomposition functionality."""
 
     @pytest.mark.asyncio
-    async def test_decompose_simple_query(
-        self, search_agent_deps: SearchAgentDeps
-    ) -> None:
+    async def test_decompose_simple_query(self, search_agent_deps: SearchAgentDeps) -> None:
         """Test decomposition of a simple query into a single sub-query.
 
         Given: A SearchAgent with mocked LLM
@@ -134,9 +130,7 @@ class TestQueryDecomposition:
 
         # Mock LLM response
         search_agent_deps.llm_client.chat.return_value = {
-            "sub_queries": [
-                {"query": "what is AI", "intent": "definition", "priority": 1}
-            ]
+            "sub_queries": [{"query": "what is AI", "intent": "definition", "priority": 1}]
         }
 
         result = await agent.decompose_query("What is AI?")
@@ -148,9 +142,7 @@ class TestQueryDecomposition:
         assert result[0].priority == 1
 
     @pytest.mark.asyncio
-    async def test_decompose_complex_query(
-        self, search_agent_deps: SearchAgentDeps
-    ) -> None:
+    async def test_decompose_complex_query(self, search_agent_deps: SearchAgentDeps) -> None:
         """Test decomposition of complex query into multiple sub-queries.
 
         Given: A SearchAgent with mocked LLM
@@ -247,6 +239,7 @@ class TestSearchCoordination:
 
         # Mock search responses
         mock_searxng_response = MagicMock()
+        mock_searxng_response.status_code = 200
         mock_searxng_response.json.return_value = {
             "results": [
                 {
@@ -282,6 +275,7 @@ class TestSearchCoordination:
 
         # Mock responses with duplicate URLs
         mock_response = MagicMock()
+        mock_response.status_code = 200
         mock_response.json.return_value = {
             "results": [
                 {
@@ -327,9 +321,7 @@ class TestSearchCoordination:
         sub_queries = [SubQuery(query="AI", intent="definition", priority=1)]
 
         # Mock timeout for one source
-        search_agent_deps.searxng_client.get.side_effect = httpx.TimeoutException(
-            "Request timeout"
-        )
+        search_agent_deps.searxng_client.get.side_effect = httpx.TimeoutException("Request timeout")
 
         # Should not raise, returns empty or partial results
         results = await agent.coordinate_search(sub_queries)
@@ -342,9 +334,7 @@ class TestResultRanking:
     """Test result ranking and filtering."""
 
     @pytest.mark.asyncio
-    async def test_rank_results_by_relevance(
-        self, search_agent_deps: SearchAgentDeps
-    ) -> None:
+    async def test_rank_results_by_relevance(self, search_agent_deps: SearchAgentDeps) -> None:
         """Test ranking of results by relevance score.
 
         Given: A SearchAgent with unranked search results
@@ -358,7 +348,7 @@ class TestResultRanking:
                 title="Low Relevance",
                 url="https://example.com/low",
                 snippet="Generic content",
-                relevance=0.3,
+                relevance=0.5,  # Changed to 0.5 to pass filtering threshold
                 source_type="web",
             ),
             SearchSource(
@@ -379,14 +369,14 @@ class TestResultRanking:
 
         ranked = await agent.rank_results(sources, "AI agents")
 
-        # Check descending order
+        # Check descending order (all 3 sources should pass filtering)
+        assert len(ranked) == 3
         assert ranked[0].relevance >= ranked[1].relevance >= ranked[2].relevance
         assert ranked[0].title == "High Relevance"
+        assert ranked[2].title == "Low Relevance"
 
     @pytest.mark.asyncio
-    async def test_rank_results_quality_filtering(
-        self, search_agent_deps: SearchAgentDeps
-    ) -> None:
+    async def test_rank_results_quality_filtering(self, search_agent_deps: SearchAgentDeps) -> None:
         """Test filtering of low-quality results.
 
         Given: A SearchAgent with mixed quality results
@@ -423,9 +413,7 @@ class TestOutputValidation:
     """Test SearchAgent output validation."""
 
     @pytest.mark.asyncio
-    async def test_output_validation_min_sources(
-        self, search_agent_deps: SearchAgentDeps
-    ) -> None:
+    async def test_output_validation_min_sources(self, search_agent_deps: SearchAgentDeps) -> None:
         """Test validation of minimum source count.
 
         Given: A SearchAgent configured with min_sources requirement
@@ -492,9 +480,7 @@ class TestSearchAgentFullWorkflow:
     """Test full SearchAgent workflow end-to-end."""
 
     @pytest.mark.asyncio
-    async def test_search_agent_full_workflow(
-        self, search_agent_deps: SearchAgentDeps
-    ) -> None:
+    async def test_search_agent_full_workflow(self, search_agent_deps: SearchAgentDeps) -> None:
         """Test complete search workflow from query to ranked results.
 
         Given: A SearchAgent with all dependencies
@@ -513,6 +499,7 @@ class TestSearchAgentFullWorkflow:
 
         # Mock search results
         mock_response = MagicMock()
+        mock_response.status_code = 200
         mock_response.json.return_value = {
             "results": [
                 {

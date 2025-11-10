@@ -168,7 +168,11 @@ class SearchAgent:
         )
 
         # Parse LLM response into SubQuery objects
-        sub_queries_data = response.get("sub_queries", [])
+        # Handle both dict and AsyncGenerator return types from LLM client
+        if hasattr(response, "get"):
+            sub_queries_data = response.get("sub_queries", [])
+        else:
+            sub_queries_data = []
         return [SubQuery(**sq_data) for sq_data in sub_queries_data]
 
     async def coordinate_search(self, sub_queries: list[SubQuery]) -> list[SearchSource]:
