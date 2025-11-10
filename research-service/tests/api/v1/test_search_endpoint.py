@@ -30,7 +30,7 @@ class TestSearchEndpointValidation:
         """Test search endpoint accepts valid request.
 
         Given: Valid search request with all required fields
-        When: POST to /v1/search
+        When: POST to /api/v1/search
         Then: Returns 200 OK (when implemented)
         """
         request_data = {
@@ -39,7 +39,11 @@ class TestSearchEndpointValidation:
             "timeout": 60,
         }
 
-        response = client.post("/v1/search", json=request_data)
+        response = client.post("/api/v1/search", json=request_data)
+
+        # Debug: print error if not 200/404
+        if response.status_code not in [status.HTTP_200_OK, status.HTTP_404_NOT_FOUND]:
+            print(f"\nError response: {response.json()}")
 
         # Should return 200 when implemented (currently 404)
         assert response.status_code in [
@@ -51,12 +55,12 @@ class TestSearchEndpointValidation:
         """Test search endpoint with minimal required fields.
 
         Given: Request with only query field
-        When: POST to /v1/search
+        When: POST to /api/v1/search
         Then: Uses default values for optional fields
         """
         request_data = {"query": "test query"}
 
-        response = client.post("/v1/search", json=request_data)
+        response = client.post("/api/v1/search", json=request_data)
 
         # Should accept request (default values applied)
         assert response.status_code in [
@@ -68,12 +72,12 @@ class TestSearchEndpointValidation:
         """Test search endpoint rejects empty query.
 
         Given: Request with empty query string
-        When: POST to /v1/search
+        When: POST to /api/v1/search
         Then: Returns 422 Validation Error
         """
         request_data = {"query": ""}
 
-        response = client.post("/v1/search", json=request_data)
+        response = client.post("/api/v1/search", json=request_data)
 
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
         error_data = response.json()
@@ -83,12 +87,12 @@ class TestSearchEndpointValidation:
         """Test search endpoint rejects whitespace-only query.
 
         Given: Request with whitespace-only query
-        When: POST to /v1/search
+        When: POST to /api/v1/search
         Then: Returns 422 Validation Error
         """
         request_data = {"query": "   "}
 
-        response = client.post("/v1/search", json=request_data)
+        response = client.post("/api/v1/search", json=request_data)
 
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
 
@@ -96,12 +100,12 @@ class TestSearchEndpointValidation:
         """Test search endpoint rejects queries exceeding max length.
 
         Given: Request with query > 1000 chars
-        When: POST to /v1/search
+        When: POST to /api/v1/search
         Then: Returns 422 Validation Error
         """
         request_data = {"query": "a" * 1001}
 
-        response = client.post("/v1/search", json=request_data)
+        response = client.post("/api/v1/search", json=request_data)
 
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
 
@@ -109,34 +113,30 @@ class TestSearchEndpointValidation:
         """Test search endpoint validates max_sources range.
 
         Given: Request with max_sources out of range
-        When: POST to /v1/search
+        When: POST to /api/v1/search
         Then: Returns 422 Validation Error
         """
         # Too low
-        response = client.post(
-            "/v1/search", json={"query": "test", "max_sources": 4}
-        )
+        response = client.post("/v1/search", json={"query": "test", "max_sources": 4})
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
 
         # Too high
-        response = client.post(
-            "/v1/search", json={"query": "test", "max_sources": 51}
-        )
+        response = client.post("/v1/search", json={"query": "test", "max_sources": 51})
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
 
     def test_search_rejects_invalid_timeout(self, client: TestClient) -> None:
         """Test search endpoint validates timeout range.
 
         Given: Request with timeout out of range
-        When: POST to /v1/search
+        When: POST to /api/v1/search
         Then: Returns 422 Validation Error
         """
         # Too low
-        response = client.post("/v1/search", json={"query": "test", "timeout": 9})
+        response = client.post("/api/v1/search", json={"query": "test", "timeout": 9})
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
 
         # Too high
-        response = client.post("/v1/search", json={"query": "test", "timeout": 301})
+        response = client.post("/api/v1/search", json={"query": "test", "timeout": 301})
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
 
 
@@ -150,14 +150,12 @@ class TestSearchEndpointExecution:
         """Test search endpoint executes SearchAgent.
 
         Given: Valid search request
-        When: POST to /v1/search
+        When: POST to /api/v1/search
         Then: SearchAgent.run() is called with query
         """
         # Mock SearchAgent
         mock_search_output = SearchOutput(
-            sub_queries=[
-                SubQuery(query="test query", intent="factual", priority=1)
-            ],
+            sub_queries=[SubQuery(query="test query", intent="factual", priority=1)],
             sources=[
                 SearchSource(
                     title="Test Source 1",
@@ -200,32 +198,28 @@ class TestSearchEndpointExecution:
         )
 
         with patch(
-            "src.api.v1.endpoints.search.SearchAgent"
-        ) as MockSearchAgent:
+            "src.api.v1.endpoints.search.create_search_agent", new_callable=AsyncMock
+        ) as mock_create_agent:
             mock_agent = MagicMock(spec=SearchAgent)
             mock_agent.run = AsyncMock(return_value=mock_search_output)
-            MockSearchAgent.return_value = mock_agent
+            mock_create_agent.return_value = mock_agent
 
             request_data = {"query": "What is Pydantic AI?"}
-            response = client.post("/v1/search", json=request_data)
+            response = client.post("/api/v1/search", json=request_data)
 
             assert response.status_code == status.HTTP_200_OK
             mock_agent.run.assert_called_once_with("What is Pydantic AI?")
 
     @pytest.mark.asyncio
-    async def test_search_returns_correct_response_structure(
-        self, client: TestClient
-    ) -> None:
+    async def test_search_returns_correct_response_structure(self, client: TestClient) -> None:
         """Test search endpoint returns properly structured response.
 
         Given: SearchAgent returns valid output
-        When: POST to /v1/search
+        When: POST to /api/v1/search
         Then: Response matches SearchResponse schema
         """
         mock_search_output = SearchOutput(
-            sub_queries=[
-                SubQuery(query="test query", intent="factual", priority=1)
-            ],
+            sub_queries=[SubQuery(query="test query", intent="factual", priority=1)],
             sources=[
                 SearchSource(
                     title=f"Source {i}",
@@ -241,14 +235,14 @@ class TestSearchEndpointExecution:
         )
 
         with patch(
-            "src.api.v1.endpoints.search.SearchAgent"
-        ) as MockSearchAgent:
+            "src.api.v1.endpoints.search.create_search_agent", new_callable=AsyncMock
+        ) as mock_create_agent:
             mock_agent = MagicMock(spec=SearchAgent)
             mock_agent.run = AsyncMock(return_value=mock_search_output)
-            MockSearchAgent.return_value = mock_agent
+            mock_create_agent.return_value = mock_agent
 
             request_data = {"query": "test query"}
-            response = client.post("/v1/search", json=request_data)
+            response = client.post("/api/v1/search", json=request_data)
 
             assert response.status_code == status.HTTP_200_OK
             data = response.json()
@@ -277,13 +271,11 @@ class TestSearchEndpointExecution:
         """Test search endpoint stores session in database.
 
         Given: Successful search execution
-        When: POST to /v1/search
+        When: POST to /api/v1/search
         Then: Session is stored with results
         """
         mock_search_output = SearchOutput(
-            sub_queries=[
-                SubQuery(query="test", intent="factual", priority=1)
-            ],
+            sub_queries=[SubQuery(query="test", intent="factual", priority=1)],
             sources=[
                 SearchSource(
                     title=f"Source {i}",
@@ -299,14 +291,14 @@ class TestSearchEndpointExecution:
         )
 
         with patch(
-            "src.api.v1.endpoints.search.SearchAgent"
-        ) as MockSearchAgent:
+            "src.api.v1.endpoints.search.create_search_agent", new_callable=AsyncMock
+        ) as mock_create_agent:
             mock_agent = MagicMock(spec=SearchAgent)
             mock_agent.run = AsyncMock(return_value=mock_search_output)
-            MockSearchAgent.return_value = mock_agent
+            mock_create_agent.return_value = mock_agent
 
             request_data = {"query": "test query"}
-            response = client.post("/v1/search", json=request_data)
+            response = client.post("/api/v1/search", json=request_data)
 
             assert response.status_code == status.HTTP_200_OK
             data = response.json()
@@ -324,18 +316,18 @@ class TestSearchEndpointErrorHandling:
         """Test search endpoint handles SearchAgent timeout.
 
         Given: SearchAgent times out
-        When: POST to /v1/search
+        When: POST to /api/v1/search
         Then: Returns 504 Gateway Timeout
         """
         with patch(
-            "src.api.v1.endpoints.search.SearchAgent"
-        ) as MockSearchAgent:
+            "src.api.v1.endpoints.search.create_search_agent", new_callable=AsyncMock
+        ) as mock_create_agent:
             mock_agent = MagicMock(spec=SearchAgent)
             mock_agent.run = AsyncMock(side_effect=TimeoutError("Search timeout"))
-            MockSearchAgent.return_value = mock_agent
+            mock_create_agent.return_value = mock_agent
 
             request_data = {"query": "test query"}
-            response = client.post("/v1/search", json=request_data)
+            response = client.post("/api/v1/search", json=request_data)
 
             assert response.status_code == status.HTTP_504_GATEWAY_TIMEOUT
             error_data = response.json()
@@ -347,20 +339,18 @@ class TestSearchEndpointErrorHandling:
         """Test search endpoint handles SearchAgent errors.
 
         Given: SearchAgent raises exception
-        When: POST to /v1/search
+        When: POST to /api/v1/search
         Then: Returns 500 Internal Server Error
         """
         with patch(
-            "src.api.v1.endpoints.search.SearchAgent"
-        ) as MockSearchAgent:
+            "src.api.v1.endpoints.search.create_search_agent", new_callable=AsyncMock
+        ) as mock_create_agent:
             mock_agent = MagicMock(spec=SearchAgent)
-            mock_agent.run = AsyncMock(
-                side_effect=Exception("Agent execution failed")
-            )
-            MockSearchAgent.return_value = mock_agent
+            mock_agent.run = AsyncMock(side_effect=Exception("Agent execution failed"))
+            mock_create_agent.return_value = mock_agent
 
             request_data = {"query": "test query"}
-            response = client.post("/v1/search", json=request_data)
+            response = client.post("/api/v1/search", json=request_data)
 
             assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
             error_data = response.json()

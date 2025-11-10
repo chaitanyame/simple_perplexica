@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from .api.v1.endpoints.search import router as search_router
 from .core.config import settings
 
 
@@ -84,6 +85,5 @@ async def root() -> JSONResponse:
     )
 
 
-# API router mounting point (endpoints will be added during TDD implementation)
-# from .api.v1.router import api_router
-# app.include_router(api_router, prefix="/api/v1")
+# Include API routers
+app.include_router(search_router, prefix="/api")

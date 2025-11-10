@@ -29,11 +29,7 @@ from src.rag.vector_store_repository import (
 @pytest_asyncio.fixture
 async def create_research_session(async_session: AsyncSession) -> uuid.UUID:
     """Create a research session in the database for testing."""
-    session = ResearchSession(
-        query="Test query",
-        mode="search",
-        status="pending"
-    )
+    session = ResearchSession(query="Test query", mode="search", status="pending")
     async_session.add(session)
     await async_session.commit()
     await async_session.refresh(session)
@@ -68,7 +64,7 @@ class TestVectorStoreRepositoryStoreVector:
             session_id=session_id,
             content=content,
             embedding=embedding,
-            metadata={"source": "test", "page": 1}
+            metadata={"source": "test", "page": 1},
         )
 
         assert isinstance(result, uuid.UUID)
@@ -95,9 +91,7 @@ class TestVectorStoreRepositoryStoreVector:
         embedding = np.random.randn(384).tolist()
 
         result = await repo.store_vector(
-            session_id=session_id,
-            content=content,
-            embedding=embedding
+            session_id=session_id, content=content, embedding=embedding
         )
 
         assert isinstance(result, uuid.UUID)
@@ -112,11 +106,7 @@ class TestVectorStoreRepositoryStoreVector:
         embedding = np.random.randn(384).tolist()
 
         with pytest.raises(VectorStoreError) as exc_info:
-            await repo.store_vector(
-                session_id=session_id,
-                content="",
-                embedding=embedding
-            )
+            await repo.store_vector(session_id=session_id, content="", embedding=embedding)
 
         assert "content" in str(exc_info.value).lower()
 
@@ -131,9 +121,7 @@ class TestVectorStoreRepositoryStoreVector:
 
         with pytest.raises(VectorStoreError) as exc_info:
             await repo.store_vector(
-                session_id=session_id,
-                content="Test content",
-                embedding=embedding
+                session_id=session_id, content="Test content", embedding=embedding
             )
 
         assert "dimension" in str(exc_info.value).lower()
@@ -154,32 +142,27 @@ class TestVectorStoreRepositoryBatchStore:
             {
                 "content": "First document about AI",
                 "embedding": np.random.randn(384).tolist(),
-                "metadata": {"page": 1}
+                "metadata": {"page": 1},
             },
             {
                 "content": "Second document about ML",
                 "embedding": np.random.randn(384).tolist(),
-                "metadata": {"page": 2}
+                "metadata": {"page": 2},
             },
             {
                 "content": "Third document about data",
                 "embedding": np.random.randn(384).tolist(),
-                "metadata": {"page": 3}
-            }
+                "metadata": {"page": 3},
+            },
         ]
 
-        result_ids = await repo.store_batch(
-            session_id=session_id,
-            documents=documents
-        )
+        result_ids = await repo.store_batch(session_id=session_id, documents=documents)
 
         assert len(result_ids) == 3
         assert all(isinstance(id, uuid.UUID) for id in result_ids)
 
         # Verify all stored
-        stmt = select(DocumentEmbedding).where(
-            DocumentEmbedding.session_id == session_id
-        )
+        stmt = select(DocumentEmbedding).where(DocumentEmbedding.session_id == session_id)
         result = await async_session.execute(stmt)
         stored = result.scalars().all()
 
@@ -216,21 +199,17 @@ class TestVectorStoreRepositorySimilaritySearch:
         different_vector = [-1.0] * 384  # Very different
 
         documents = [
-            {
-                "content": "Base document",
-                "embedding": base_vector,
-                "metadata": {"type": "base"}
-            },
+            {"content": "Base document", "embedding": base_vector, "metadata": {"type": "base"}},
             {
                 "content": "Similar document",
                 "embedding": similar_vector,
-                "metadata": {"type": "similar"}
+                "metadata": {"type": "similar"},
             },
             {
                 "content": "Different document",
                 "embedding": different_vector,
-                "metadata": {"type": "different"}
-            }
+                "metadata": {"type": "different"},
+            },
         ]
 
         doc_ids = await repo.store_batch(session_id=session_id, documents=documents)
@@ -238,9 +217,7 @@ class TestVectorStoreRepositorySimilaritySearch:
 
     @pytest.mark.asyncio
     async def test_similarity_search_success(
-        self,
-        async_session: AsyncSession,
-        setup_test_vectors: tuple[uuid.UUID, list[uuid.UUID]]
+        self, async_session: AsyncSession, setup_test_vectors: tuple[uuid.UUID, list[uuid.UUID]]
     ) -> None:
         """Test successful similarity search."""
         repo = VectorStoreRepository(db=async_session)
@@ -249,9 +226,7 @@ class TestVectorStoreRepositorySimilaritySearch:
         # Search with base vector
         query_vector = [1.0] * 384
         results = await repo.similarity_search(
-            session_id=session_id,
-            query_vector=query_vector,
-            top_k=3
+            session_id=session_id, query_vector=query_vector, top_k=3
         )
 
         assert len(results) == 3
@@ -269,9 +244,7 @@ class TestVectorStoreRepositorySimilaritySearch:
 
     @pytest.mark.asyncio
     async def test_similarity_search_with_limit(
-        self,
-        async_session: AsyncSession,
-        setup_test_vectors: tuple[uuid.UUID, list[uuid.UUID]]
+        self, async_session: AsyncSession, setup_test_vectors: tuple[uuid.UUID, list[uuid.UUID]]
     ) -> None:
         """Test similarity search with top_k limit."""
         repo = VectorStoreRepository(db=async_session)
@@ -279,18 +252,14 @@ class TestVectorStoreRepositorySimilaritySearch:
 
         query_vector = [1.0] * 384
         results = await repo.similarity_search(
-            session_id=session_id,
-            query_vector=query_vector,
-            top_k=2
+            session_id=session_id, query_vector=query_vector, top_k=2
         )
 
         assert len(results) == 2
 
     @pytest.mark.asyncio
     async def test_similarity_search_with_threshold(
-        self,
-        async_session: AsyncSession,
-        setup_test_vectors: tuple[uuid.UUID, list[uuid.UUID]]
+        self, async_session: AsyncSession, setup_test_vectors: tuple[uuid.UUID, list[uuid.UUID]]
     ) -> None:
         """Test similarity search with similarity threshold."""
         repo = VectorStoreRepository(db=async_session)
@@ -301,7 +270,7 @@ class TestVectorStoreRepositorySimilaritySearch:
             session_id=session_id,
             query_vector=query_vector,
             top_k=10,
-            similarity_threshold=0.95  # High threshold
+            similarity_threshold=0.95,  # High threshold
         )
 
         # Only highly similar documents should be returned
@@ -318,9 +287,7 @@ class TestVectorStoreRepositorySimilaritySearch:
 
         query_vector = [1.0] * 384
         results = await repo.similarity_search(
-            session_id=session_id,
-            query_vector=query_vector,
-            top_k=5
+            session_id=session_id, query_vector=query_vector, top_k=5
         )
 
         assert len(results) == 0
@@ -336,11 +303,7 @@ class TestVectorStoreRepositorySimilaritySearch:
         query_vector = [1.0] * 256  # Wrong dimension
 
         with pytest.raises(VectorStoreError) as exc_info:
-            await repo.similarity_search(
-                session_id=session_id,
-                query_vector=query_vector,
-                top_k=5
-            )
+            await repo.similarity_search(session_id=session_id, query_vector=query_vector, top_k=5)
 
         assert "dimension" in str(exc_info.value).lower()
 
@@ -361,7 +324,7 @@ class TestVectorStoreRepositoryDelete:
             {
                 "content": f"Document {i}",
                 "embedding": np.random.randn(384).tolist(),
-                "metadata": {"index": i}
+                "metadata": {"index": i},
             }
             for i in range(5)
         ]
@@ -374,9 +337,7 @@ class TestVectorStoreRepositoryDelete:
         assert deleted_count == 5
 
         # Verify deleted
-        stmt = select(DocumentEmbedding).where(
-            DocumentEmbedding.session_id == session_id
-        )
+        stmt = select(DocumentEmbedding).where(DocumentEmbedding.session_id == session_id)
         result = await async_session.execute(stmt)
         remaining = result.scalars().all()
 
@@ -392,9 +353,7 @@ class TestVectorStoreRepositoryDelete:
 
         # Store a vector
         doc_id = await repo.store_vector(
-            session_id=session_id,
-            content="Test document",
-            embedding=np.random.randn(384).tolist()
+            session_id=session_id, content="Test document", embedding=np.random.randn(384).tolist()
         )
 
         # Delete it
@@ -425,10 +384,7 @@ class TestVectorStoreRepositoryRetrieve:
 
         # Store vector
         doc_id = await repo.store_vector(
-            session_id=session_id,
-            content=content,
-            embedding=embedding,
-            metadata=metadata
+            session_id=session_id, content=content, embedding=embedding, metadata=metadata
         )
 
         # Retrieve it
@@ -461,11 +417,7 @@ class TestVectorStoreRepositoryRetrieve:
 
         # Store multiple vectors
         documents = [
-            {
-                "content": f"Doc {i}",
-                "embedding": np.random.randn(384).tolist(),
-                "metadata": {}
-            }
+            {"content": f"Doc {i}", "embedding": np.random.randn(384).tolist(), "metadata": {}}
             for i in range(7)
         ]
 
@@ -487,7 +439,7 @@ class TestVectorStoreRepositorySearchResult:
             content="Test content",
             embedding=[1.0] * 384,
             metadata={"test": True},
-            similarity_score=0.95
+            similarity_score=0.95,
         )
 
         assert result.similarity_score == 0.95
@@ -502,7 +454,7 @@ class TestVectorStoreRepositorySearchResult:
                 content=f"Doc {i}",
                 embedding=[],
                 metadata={},
-                similarity_score=score
+                similarity_score=score,
             )
             for i, score in enumerate([0.7, 0.9, 0.8])
         ]

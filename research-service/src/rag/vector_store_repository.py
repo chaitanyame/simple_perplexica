@@ -64,7 +64,7 @@ class VectorStoreRepository:
         session_id: uuid.UUID,
         content: str,
         embedding: list[float],
-        metadata: dict[str, Any] | None = None
+        metadata: dict[str, Any] | None = None,
     ) -> uuid.UUID:
         """Store a single vector in the database.
 
@@ -95,7 +95,7 @@ class VectorStoreRepository:
                 session_id=session_id,
                 content=content.strip(),
                 embedding=embedding,
-                doc_metadata=metadata or {}
+                doc_metadata=metadata or {},
             )
 
             self.db.add(doc_embedding)
@@ -109,9 +109,7 @@ class VectorStoreRepository:
             raise VectorStoreError(f"Failed to store vector: {e}") from e
 
     async def store_batch(
-        self,
-        session_id: uuid.UUID,
-        documents: list[dict[str, Any]]
+        self, session_id: uuid.UUID, documents: list[dict[str, Any]]
     ) -> list[uuid.UUID]:
         """Store multiple vectors in a batch.
 
@@ -139,15 +137,13 @@ class VectorStoreRepository:
 
                 embedding = doc.get("embedding", [])
                 if len(embedding) != self.dimension:
-                    raise VectorStoreError(
-                        f"All embeddings must have dimension {self.dimension}"
-                    )
+                    raise VectorStoreError(f"All embeddings must have dimension {self.dimension}")
 
                 doc_embedding = DocumentEmbedding(
                     session_id=session_id,
                     content=content.strip(),
                     embedding=embedding,
-                    doc_metadata=doc.get("metadata", {})
+                    doc_metadata=doc.get("metadata", {}),
                 )
                 doc_embeddings.append(doc_embedding)
 
@@ -173,7 +169,7 @@ class VectorStoreRepository:
         session_id: uuid.UUID,
         query_vector: list[float],
         top_k: int = 10,
-        similarity_threshold: float | None = None
+        similarity_threshold: float | None = None,
     ) -> list[SearchResult]:
         """Perform cosine similarity search.
 
@@ -206,7 +202,7 @@ class VectorStoreRepository:
                     DocumentEmbedding.content,
                     DocumentEmbedding.embedding,
                     DocumentEmbedding.doc_metadata,
-                    similarity.label("similarity_score")
+                    similarity.label("similarity_score"),
                 )
                 .where(DocumentEmbedding.session_id == session_id)
                 .order_by(similarity.desc())
@@ -228,7 +224,7 @@ class VectorStoreRepository:
                     content=row.content,
                     embedding=row.embedding,
                     metadata=row.doc_metadata or {},
-                    similarity_score=float(row.similarity_score)
+                    similarity_score=float(row.similarity_score),
                 )
                 for row in rows
             ]
@@ -248,9 +244,7 @@ class VectorStoreRepository:
             Number of documents deleted
         """
         try:
-            stmt = delete(DocumentEmbedding).where(
-                DocumentEmbedding.session_id == session_id
-            )
+            stmt = delete(DocumentEmbedding).where(DocumentEmbedding.session_id == session_id)
 
             result = await self.db.execute(stmt)
             await self.db.commit()
@@ -271,9 +265,7 @@ class VectorStoreRepository:
             True if deleted, False if not found
         """
         try:
-            stmt = delete(DocumentEmbedding).where(
-                DocumentEmbedding.id == vector_id
-            )
+            stmt = delete(DocumentEmbedding).where(DocumentEmbedding.id == vector_id)
 
             result = await self.db.execute(stmt)
             await self.db.commit()
@@ -284,9 +276,7 @@ class VectorStoreRepository:
             await self.db.rollback()
             raise VectorStoreError(f"Failed to delete vector: {e}") from e
 
-    async def get_vector(
-        self, vector_id: uuid.UUID
-    ) -> dict[str, Any] | None:
+    async def get_vector(self, vector_id: uuid.UUID) -> dict[str, Any] | None:
         """Retrieve a vector by its ID.
 
         Args:
@@ -296,9 +286,7 @@ class VectorStoreRepository:
             Dictionary with vector data or None if not found
         """
         try:
-            stmt = select(DocumentEmbedding).where(
-                DocumentEmbedding.id == vector_id
-            )
+            stmt = select(DocumentEmbedding).where(DocumentEmbedding.id == vector_id)
 
             result = await self.db.execute(stmt)
             doc = result.scalar_one_or_none()
@@ -312,7 +300,7 @@ class VectorStoreRepository:
                 "content": doc.content,
                 "embedding": doc.embedding,
                 "metadata": doc.doc_metadata or {},
-                "created_at": doc.created_at
+                "created_at": doc.created_at,
             }
 
         except Exception as e:
@@ -328,8 +316,10 @@ class VectorStoreRepository:
             Number of vectors in the session
         """
         try:
-            stmt = select(func.count()).select_from(DocumentEmbedding).where(
-                DocumentEmbedding.session_id == session_id
+            stmt = (
+                select(func.count())
+                .select_from(DocumentEmbedding)
+                .where(DocumentEmbedding.session_id == session_id)
             )
 
             result = await self.db.execute(stmt)

@@ -66,10 +66,7 @@ class EmbeddingService:
         """
         if self._model is None:
             try:
-                self._model = SentenceTransformer(
-                    self.model_name,
-                    device=self.device
-                )
+                self._model = SentenceTransformer(self.model_name, device=self.device)
             except Exception as e:
                 raise EmbeddingError(f"Failed to load model '{self.model_name}': {e}") from e
 
@@ -100,10 +97,7 @@ class EmbeddingService:
         try:
             # Run encoding in thread pool to avoid blocking
             embedding: np.ndarray[tuple[int], np.dtype[np.float32]] = await asyncio.to_thread(
-                self.model.encode,
-                text.strip(),
-                convert_to_numpy=True,
-                show_progress_bar=False
+                self.model.encode, text.strip(), convert_to_numpy=True, show_progress_bar=False
             )
 
             # Convert to list of floats
@@ -113,11 +107,7 @@ class EmbeddingService:
         except Exception as e:
             raise EmbeddingError(f"Failed to encode text: {e}") from e
 
-    async def embed_batch(
-        self,
-        texts: list[str],
-        batch_size: int = 32
-    ) -> list[list[float]]:
+    async def embed_batch(self, texts: list[str], batch_size: int = 32) -> list[list[float]]:
         """Generate embeddings for multiple texts.
 
         Args:
@@ -154,7 +144,7 @@ class EmbeddingService:
                 texts,
                 batch_size=batch_size,
                 show_progress_bar=False,
-                convert_to_numpy=True
+                convert_to_numpy=True,
             )
 
             # Convert to list of lists
@@ -164,11 +154,7 @@ class EmbeddingService:
         except Exception as e:
             raise EmbeddingError(f"Failed to encode batch: {e}") from e
 
-    def cosine_similarity(
-        self,
-        vec1: list[float],
-        vec2: list[float]
-    ) -> float:
+    def cosine_similarity(self, vec1: list[float], vec2: list[float]) -> float:
         """Calculate cosine similarity between two vectors.
 
         Args:

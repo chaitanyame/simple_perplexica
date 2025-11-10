@@ -35,10 +35,7 @@ class TestEmbeddingServiceInitialization:
 
     def test_initialize_with_custom_model(self) -> None:
         """Test initialization with custom model."""
-        service = EmbeddingService(
-            model_name="paraphrase-MiniLM-L6-v2",
-            device="cuda"
-        )
+        service = EmbeddingService(model_name="paraphrase-MiniLM-L6-v2", device="cuda")
 
         assert service.model_name == "paraphrase-MiniLM-L6-v2"
         assert service.device == "cuda"
@@ -91,9 +88,7 @@ class TestEmbeddingServiceSingleText:
         assert "empty" in str(exc_info.value).lower()
 
     @pytest.mark.asyncio
-    async def test_embed_very_long_text(
-        self, service: EmbeddingService, mock_model: Mock
-    ) -> None:
+    async def test_embed_very_long_text(self, service: EmbeddingService, mock_model: Mock) -> None:
         """Test embedding very long text (should truncate)."""
         service._model = mock_model
         # Create text longer than typical max length (512 tokens)
@@ -121,9 +116,7 @@ class TestEmbeddingServiceBatchText:
         return model
 
     @pytest.mark.asyncio
-    async def test_embed_batch_success(
-        self, service: EmbeddingService, mock_model: Mock
-    ) -> None:
+    async def test_embed_batch_success(self, service: EmbeddingService, mock_model: Mock) -> None:
         """Test successful batch text embedding."""
         service._model = mock_model
         texts = [
@@ -162,9 +155,7 @@ class TestEmbeddingServiceBatchText:
         assert "empty" in str(exc_info.value).lower()
 
     @pytest.mark.asyncio
-    async def test_embed_batch_with_empty_strings(
-        self, service: EmbeddingService
-    ) -> None:
+    async def test_embed_batch_with_empty_strings(self, service: EmbeddingService) -> None:
         """Test batch with empty strings raises error."""
         with pytest.raises(EmbeddingError) as exc_info:
             await service.embed_batch(["Valid text", "", "Another valid"])
@@ -293,9 +284,7 @@ class TestEmbeddingServiceDimensions:
         return EmbeddingService()
 
     @pytest.mark.asyncio
-    async def test_embedding_dimension_384(
-        self, service: EmbeddingService
-    ) -> None:
+    async def test_embedding_dimension_384(self, service: EmbeddingService) -> None:
         """Test that embeddings have correct dimension (384)."""
         mock_model = Mock()
         mock_model.encode.return_value = np.random.randn(384).astype(np.float32)

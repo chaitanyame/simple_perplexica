@@ -22,11 +22,7 @@ from src.services.embedding.embedding_service import EmbeddingService
 @pytest.fixture
 async def research_session(async_session: AsyncSession) -> ResearchSession:
     """Create a research session for integration tests."""
-    session = ResearchSession(
-        query="Test integration query",
-        mode="search",
-        status="processing"
-    )
+    session = ResearchSession(query="Test integration query", mode="search", status="processing")
     async_session.add(session)
     await async_session.commit()
     await async_session.refresh(session)
@@ -54,7 +50,7 @@ class TestEmbeddingVectorStoreIntegration:
         self,
         embedder: EmbeddingService,
         vector_store: VectorStoreRepository,
-        research_session: ResearchSession
+        research_session: ResearchSession,
     ) -> None:
         """Test complete pipeline: text → embedding → storage → retrieval."""
         # Sample text chunks
@@ -63,7 +59,7 @@ class TestEmbeddingVectorStoreIntegration:
             "Supervised learning uses labeled training data.",
             "Unsupervised learning finds patterns without labels.",
             "Deep learning uses neural networks with multiple layers.",
-            "Natural language processing enables language understanding."
+            "Natural language processing enables language understanding.",
         ]
 
         # Step 1: Generate embeddings
@@ -74,17 +70,12 @@ class TestEmbeddingVectorStoreIntegration:
 
         # Step 2: Store in vector database
         documents = [
-            {
-                "content": text,
-                "embedding": embedding,
-                "metadata": {"index": idx, "topic": "ai"}
-            }
+            {"content": text, "embedding": embedding, "metadata": {"index": idx, "topic": "ai"}}
             for idx, (text, embedding) in enumerate(zip(texts, embeddings))
         ]
 
         doc_ids = await vector_store.store_batch(
-            session_id=research_session.id,
-            documents=documents
+            session_id=research_session.id, documents=documents
         )
 
         assert len(doc_ids) == len(texts)
@@ -95,10 +86,7 @@ class TestEmbeddingVectorStoreIntegration:
         query_embedding = await embedder.embed_text(query)
 
         results = await vector_store.similarity_search(
-            session_id=research_session.id,
-            query_vector=query_embedding,
-            top_k=3,
-            threshold=0.3
+            session_id=research_session.id, query_vector=query_embedding, top_k=3, threshold=0.3
         )
 
         assert len(results) > 0
@@ -118,23 +106,23 @@ class TestEmbeddingVectorStoreIntegration:
         self,
         embedder: EmbeddingService,
         vector_store: VectorStoreRepository,
-        research_session: ResearchSession
+        research_session: ResearchSession,
     ) -> None:
         """Test semantic similarity search across diverse topics."""
         # Store documents on different topics
         topics = {
             "programming": [
                 "Python is a high-level programming language.",
-                "JavaScript runs in web browsers for frontend development."
+                "JavaScript runs in web browsers for frontend development.",
             ],
             "machine_learning": [
                 "Neural networks learn from training data.",
-                "Support vector machines are supervised learning models."
+                "Support vector machines are supervised learning models.",
             ],
             "databases": [
                 "PostgreSQL is a relational database system.",
-                "Vector databases store high-dimensional embeddings."
-            ]
+                "Vector databases store high-dimensional embeddings.",
+            ],
         }
 
         all_texts = []
@@ -152,25 +140,20 @@ class TestEmbeddingVectorStoreIntegration:
             for text, emb, meta in zip(all_texts, embeddings, all_metadata)
         ]
 
-        await vector_store.store_batch(
-            session_id=research_session.id,
-            documents=documents
-        )
+        await vector_store.store_batch(session_id=research_session.id, documents=documents)
 
         # Test queries for each topic
         test_queries = {
             "programming": "web development languages",
             "machine_learning": "deep learning algorithms",
-            "databases": "storing vector embeddings"
+            "databases": "storing vector embeddings",
         }
 
         for expected_topic, query in test_queries.items():
             query_embedding = await embedder.embed_text(query)
 
             results = await vector_store.similarity_search(
-                session_id=research_session.id,
-                query_vector=query_embedding,
-                top_k=2
+                session_id=research_session.id, query_vector=query_embedding, top_k=2
             )
 
             assert len(results) > 0
@@ -185,7 +168,7 @@ class TestEmbeddingVectorStoreIntegration:
         self,
         embedder: EmbeddingService,
         vector_store: VectorStoreRepository,
-        research_session: ResearchSession
+        research_session: ResearchSession,
     ) -> None:
         """Test batch operations with larger dataset."""
         # Generate 20 sample texts
@@ -207,8 +190,7 @@ class TestEmbeddingVectorStoreIntegration:
         ]
 
         doc_ids = await vector_store.store_batch(
-            session_id=research_session.id,
-            documents=documents
+            session_id=research_session.id, documents=documents
         )
 
         assert len(doc_ids) == 20
@@ -220,9 +202,7 @@ class TestEmbeddingVectorStoreIntegration:
         # Search and verify
         query_embedding = await embedder.embed_text("artificial intelligence")
         results = await vector_store.similarity_search(
-            session_id=research_session.id,
-            query_vector=query_embedding,
-            top_k=5
+            session_id=research_session.id, query_vector=query_embedding, top_k=5
         )
 
         assert len(results) == 5
@@ -233,7 +213,7 @@ class TestEmbeddingVectorStoreIntegration:
         self,
         embedder: EmbeddingService,
         vector_store: VectorStoreRepository,
-        research_session: ResearchSession
+        research_session: ResearchSession,
     ) -> None:
         """Test complete lifecycle: store → retrieve → delete."""
         # Store documents
@@ -246,8 +226,7 @@ class TestEmbeddingVectorStoreIntegration:
         ]
 
         doc_ids = await vector_store.store_batch(
-            session_id=research_session.id,
-            documents=documents
+            session_id=research_session.id, documents=documents
         )
 
         # Verify stored
@@ -281,7 +260,7 @@ class TestEmbeddingVectorStoreIntegration:
         self,
         embedder: EmbeddingService,
         vector_store: VectorStoreRepository,
-        research_session: ResearchSession
+        research_session: ResearchSession,
     ) -> None:
         """Test error handling across components."""
         # Test embedding errors
@@ -300,21 +279,15 @@ class TestEmbeddingVectorStoreIntegration:
                 session_id=research_session.id,
                 content="test",
                 embedding=[1.0] * 128,  # Wrong dimension
-                metadata={}
+                metadata={},
             )
 
         # Empty content
         with pytest.raises(VectorStoreError):
             await vector_store.store_vector(
-                session_id=research_session.id,
-                content="",
-                embedding=valid_embedding,
-                metadata={}
+                session_id=research_session.id, content="", embedding=valid_embedding, metadata={}
             )
 
         # Empty batch
         with pytest.raises(VectorStoreError):
-            await vector_store.store_batch(
-                session_id=research_session.id,
-                documents=[]
-            )
+            await vector_store.store_batch(session_id=research_session.id, documents=[])

@@ -74,9 +74,7 @@ class TestCrawl4AIClientSingleURL:
         return result
 
     @pytest.mark.asyncio
-    async def test_crawl_url_success(
-        self, client: Crawl4AIClient, mock_crawl_result: Mock
-    ) -> None:
+    async def test_crawl_url_success(self, client: Crawl4AIClient, mock_crawl_result: Mock) -> None:
         """Test successful URL crawling."""
         with patch("src.services.crawl.crawl4ai_client.AsyncWebCrawler") as mock_crawler_class:
             mock_crawler = AsyncMock()
@@ -103,10 +101,7 @@ class TestCrawl4AIClientSingleURL:
             mock_crawler.arun.return_value = mock_crawl_result
             mock_crawler_class.return_value.__aenter__.return_value = mock_crawler
 
-            result = await client.crawl_url(
-                "https://example.com",
-                css_selector="article.content"
-            )
+            result = await client.crawl_url("https://example.com", css_selector="article.content")
 
             assert result.success is True
             # Verify CrawlerRunConfig was created with css_selector
@@ -124,10 +119,7 @@ class TestCrawl4AIClientSingleURL:
             mock_crawler.arun.return_value = mock_crawl_result
             mock_crawler_class.return_value.__aenter__.return_value = mock_crawler
 
-            result = await client.crawl_url(
-                "https://example.com",
-                wait_for="css:.loaded"
-            )
+            result = await client.crawl_url("https://example.com", wait_for="css:.loaded")
 
             assert result.success is True
 
@@ -192,9 +184,7 @@ class TestCrawl4AIClientMultipleURLs:
             assert results[2].url == "https://example.com/page2"
 
     @pytest.mark.asyncio
-    async def test_crawl_multiple_urls_with_failures(
-        self, client: Crawl4AIClient
-    ) -> None:
+    async def test_crawl_multiple_urls_with_failures(self, client: Crawl4AIClient) -> None:
         """Test crawling multiple URLs with some failures."""
         mock_results = [
             Mock(
@@ -337,9 +327,7 @@ class TestCrawl4AIClientExtraction:
         return Crawl4AIClient()
 
     @pytest.mark.asyncio
-    async def test_extract_with_word_threshold(
-        self, client: Crawl4AIClient
-    ) -> None:
+    async def test_extract_with_word_threshold(self, client: Crawl4AIClient) -> None:
         """Test extraction with word count threshold."""
         mock_result = Mock()
         mock_result.success = True
@@ -357,10 +345,7 @@ class TestCrawl4AIClientExtraction:
             mock_crawler.arun.return_value = mock_result
             mock_crawler_class.return_value.__aenter__.return_value = mock_crawler
 
-            result = await client.crawl_url(
-                "https://example.com",
-                word_count_threshold=50
-            )
+            result = await client.crawl_url("https://example.com", word_count_threshold=50)
 
             assert result.success is True
 
