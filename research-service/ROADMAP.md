@@ -143,19 +143,51 @@ pytest tests/e2e/ -v --slow
 - **Coverage**: 85.20% (exceeds 80% target)
 - **Status**: 🎉 **COMPLETE** - Ready for Phase 2
 
-### 🔄 Phase 2 Week 4: Agent System - **UP NEXT**
+### ✅ Phase 2 Week 4: Agent System - **COMPLETE**
 
-**Week 4 Goals**:
-1. Pydantic AI agent framework setup
-2. Search Agent (query decomposition, ranking)
-3. Research Agent (multi-step planning)
-4. Agent integration with LLM client + Langfuse
+**Week 4** (7 commits, 36 tests, SearchAgent 95.51%, ResearchAgent 93.10% coverage):
+- ✅ Pydantic AI agent framework with dependency injection
+- ✅ SearchAgent: Query decomposition, parallel search, deduplication
+- ✅ ResearchAgent: Multi-step planning, evidence synthesis, validation
+- ✅ 27 unit tests (TDD: RED → GREEN → REFACTOR)
+- ✅ 9 integration tests (real DB, mocked APIs, multi-agent coordination)
+- ✅ Code quality: mypy --strict ✅, ruff ✅
+- **Deliverables**: Production-ready SearchAgent & ResearchAgent
 
-**Next Steps**:
-1. Design agent base class and interfaces
-2. Implement SearchAgent with Pydantic AI
-3. Create agent tests with TDD methodology
-4. Integrate with existing RAG components
+**Phase 2 Week 4 Summary**:
+- **Total Commits**: 7 (3 RED, 4 GREEN+REFACTOR)
+- **Total Tests**: 36 (27 unit + 9 integration) - 100% passing
+- **Coverage**: SearchAgent 95.51%, ResearchAgent 93.10%
+- **Status**: 🎉 **COMPLETE** - Ready for Week 5 (API & UI)
+
+### 🔄 Phase 2 Week 5: API & Testing UI - **UP NEXT**
+
+**Week 5 Goals** (Est. 5-6 days):
+1. **FastAPI Endpoints** (3-4 days)
+   - `/v1/search` - SearchAgent integration
+   - `/v1/research` - ResearchAgent integration
+   - `/v1/sessions/{id}` - Session retrieval
+   - Request/response validation with Pydantic
+   - Error handling middleware
+   - OpenAPI documentation
+
+2. **Streamlit Testing UI** (2-3 days)
+   - Search mode interface with parameter controls
+   - Research mode interface with real-time progress
+   - Session history viewer
+   - Export functionality (JSON, Markdown)
+   - Langfuse trace viewer integration
+
+3. **E2E Tests** (1 day)
+   - Full API workflow tests
+   - Performance benchmarks
+   - Integration validation
+
+**Week 5 Exit Criteria**:
+- 15+ E2E tests passing
+- API response time <200ms (p95)
+- Streamlit UI fully functional
+- OpenAPI schema complete
 
 ---
 
