@@ -12,9 +12,8 @@ Test Coverage:
 - Full research workflow
 """
 
-from datetime import datetime
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,10 +26,31 @@ from src.agents.research_agent import (
     ResearchPlan,
     ResearchStep,
 )
-from src.agents.search_agent import SearchAgent, SearchAgentDeps, SearchOutput, SearchSource, SubQuery
+from src.agents.search_agent import (
+    SearchAgent,
+    SearchOutput,
+    SearchSource,
+    SubQuery,
+)
+from src.rag.vector_store_repository import VectorStoreRepository
 from src.services.llm.langfuse_tracer import LangfuseTracer
 from src.services.llm.openrouter_client import OpenRouterClient
-from src.rag.vector_store_repository import VectorStoreRepository
+
+
+@pytest.fixture
+def mock_llm_client() -> OpenRouterClient:
+    """Mock OpenRouter LLM client."""
+    client = MagicMock(spec=OpenRouterClient)
+    client.chat = AsyncMock()
+    return client
+
+
+@pytest.fixture
+def mock_tracer() -> LangfuseTracer:
+    """Mock Langfuse tracer."""
+    tracer = MagicMock(spec=LangfuseTracer)
+    tracer.trace_llm_call = AsyncMock()
+    return tracer
 
 
 @pytest.fixture
@@ -72,9 +92,7 @@ def research_agent_deps(
 class TestResearchAgentInitialization:
     """Test ResearchAgent initialization and setup."""
 
-    def test_research_agent_initialization(
-        self, research_agent_deps: ResearchAgentDeps
-    ) -> None:
+    def test_research_agent_initialization(self, research_agent_deps: ResearchAgentDeps) -> None:
         """Test that ResearchAgent initializes with correct dependencies.
 
         Given: Valid ResearchAgentDeps with SearchAgent
@@ -118,9 +136,7 @@ class TestResearchPlanGeneration:
     """Test research plan generation functionality."""
 
     @pytest.mark.asyncio
-    async def test_generate_plan_simple_query(
-        self, research_agent_deps: ResearchAgentDeps
-    ) -> None:
+    async def test_generate_plan_simple_query(self, research_agent_deps: ResearchAgentDeps) -> None:
         """Test plan generation for a simple query.
 
         Given: A ResearchAgent with mocked LLM
@@ -202,9 +218,7 @@ class TestResearchPlanGeneration:
         assert result.steps[2].depends_on == [1, 2]
 
     @pytest.mark.asyncio
-    async def test_plan_step_dependencies(
-        self, research_agent_deps: ResearchAgentDeps
-    ) -> None:
+    async def test_plan_step_dependencies(self, research_agent_deps: ResearchAgentDeps) -> None:
         """Test that plan steps have correct dependency relationships.
 
         Given: A ResearchAgent generating a multi-step plan
@@ -341,9 +355,7 @@ class TestCitationManagement:
         assert citations[0].relevance >= citations[1].relevance
 
     @pytest.mark.asyncio
-    async def test_citation_deduplication(
-        self, research_agent_deps: ResearchAgentDeps
-    ) -> None:
+    async def test_citation_deduplication(self, research_agent_deps: ResearchAgentDeps) -> None:
         """Test deduplication of citations by URL.
 
         Given: A ResearchAgent with duplicate sources
@@ -417,9 +429,9 @@ class TestSynthesisAndRefinement:
             ),
         ]
 
-        # Mock LLM synthesis
+        # Mock LLM synthesis (>= 100 chars)
         research_agent_deps.llm_client.chat.return_value = {
-            "synthesis": "AI agents are autonomous systems that use learning algorithms..."
+            "synthesis": "AI agents are autonomous systems that use learning algorithms to perform tasks and make decisions. They can adapt to changing environments and learn from experience to improve their performance over time."
         }
 
         result = await agent.synthesize_findings(citations, "What are AI agents?")
@@ -568,20 +580,27 @@ class TestResearchAgentFullWorkflow:
         """
         agent = ResearchAgent(deps=research_agent_deps)
 
-        # Mock LLM plan generation
-        research_agent_deps.llm_client.chat.return_value = {
-            "steps": [
-                {
-                    "step_number": 1,
-                    "description": "Research AI agents",
-                    "search_query": "what are AI agents",
-                    "expected_outcome": "Understanding of AI agents",
-                    "depends_on": [],
-                }
-            ],
-            "estimated_time": 60.0,
-            "complexity": "simple",
-        }
+        # Mock LLM responses (plan generation, then synthesis)
+        research_agent_deps.llm_client.chat.side_effect = [
+            # First call: plan generation
+            {
+                "steps": [
+                    {
+                        "step_number": 1,
+                        "description": "Research AI agents",
+                        "search_query": "what are AI agents",
+                        "expected_outcome": "Understanding of AI agents",
+                        "depends_on": [],
+                    }
+                ],
+                "estimated_time": 60.0,
+                "complexity": "simple",
+            },
+            # Second call: synthesis
+            {
+                "synthesis": "AI agents are autonomous systems that can perceive their environment, make decisions, and take actions to achieve specific goals. They use various techniques including machine learning, natural language processing, and reasoning to perform complex tasks efficiently."
+            },
+        ]
 
         # Mock SearchAgent response
         mock_search_output = SearchOutput(
@@ -590,7 +609,7 @@ class TestResearchAgentFullWorkflow:
                 SearchSource(
                     title=f"AI Source {i}",
                     url=f"https://example.com/{i}",
-                    snippet=f"AI agents content {i}",
+                    snippet=f"AI agents content {i}with detailed information about autonomous systems and their capabilities",
                     relevance=0.8,
                     source_type="academic",
                 )
