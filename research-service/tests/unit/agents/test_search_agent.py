@@ -27,7 +27,7 @@ from src.agents.search_agent import (
     SubQuery,
 )
 from src.services.llm.openrouter_client import OpenRouterClient
-from src.services.tracing.langfuse_tracer import LangfuseTracer
+from src.services.llm.langfuse_tracer import LangfuseTracer
 
 
 @pytest.fixture
@@ -59,13 +59,13 @@ def search_agent_deps(
     mock_llm_client: OpenRouterClient,
     mock_tracer: LangfuseTracer,
     mock_searxng_client: httpx.AsyncClient,
-    async_db_session: AsyncSession,
+    async_session: AsyncSession,
 ) -> SearchAgentDeps:
     """Create SearchAgent dependencies for testing."""
     return SearchAgentDeps(
         llm_client=mock_llm_client,
         tracer=mock_tracer,
-        db=async_db_session,
+        db=async_session,
         searxng_client=mock_searxng_client,
         serperdev_api_key="test_serperdev_key",
         max_sources=20,
