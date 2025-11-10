@@ -92,3 +92,18 @@ class SessionDocument(Base):
     # Relationships
     session: Mapped[ResearchSession] = relationship(back_populates="documents")
     document: Mapped[RAGDocument] = relationship(back_populates="sessions")
+
+
+class DocumentEmbedding(Base):
+    """Session-specific document embeddings for vector similarity search."""
+
+    __tablename__ = "document_embeddings"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("research_sessions.id"), nullable=False, index=True
+    )
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    embedding: Mapped[Any] = mapped_column(Vector(384), nullable=False)
+    doc_metadata: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
