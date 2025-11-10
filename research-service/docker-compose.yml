@@ -10,7 +10,7 @@ services:
       POSTGRES_USER: research_user
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-research_password}
     ports:
-      - "5432:5432"
+      - "5433:5432"  # Use 5433 externally to avoid conflicts
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./src/database/init.sql:/docker-entrypoint-initdb.d/init.sql
@@ -27,7 +27,7 @@ services:
     image: redis:7-alpine
     container_name: research_redis
     ports:
-      - "6379:6379"
+      - "6380:6379"  # Use 6380 externally to avoid conflict with main Redis
     volumes:
       - redis_data:/data
     healthcheck:
@@ -45,7 +45,7 @@ services:
       dockerfile: Dockerfile
     container_name: research_api
     ports:
-      - "8001:8000"
+      - "8001:8000"  # Use 8001 externally to avoid conflict with other services
     environment:
       # Database
       DATABASE_URL: postgresql+asyncpg://research_user:${POSTGRES_PASSWORD:-research_password}@postgres:5432/research_db
@@ -60,8 +60,12 @@ services:
       LANGFUSE_HOST: ${LANGFUSE_HOST:-https://cloud.langfuse.com}
       
       # Search (reuse from main app if available)
+      # Try host.docker.internal first, fallback to SERPER if SearxNG unavailable
       SEARXNG_BASE_URL: ${SEARXNG_BASE_URL:-http://host.docker.internal:8080}
-      SERPER_API_KEY: ${SERPER_API_KEY}
+      SERPER_API_KEY: ${SERPER_API_KEY:-}
+      
+      # LLM Model
+      LLM_MODEL: ${LLM_MODEL:-anthropic/claude-3.5-sonnet}
       
       # App settings
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
@@ -78,23 +82,24 @@ services:
     networks:
       - research-network
 
-  # Streamlit testing UI (optional)
+  # Streamlit testing UI
   streamlit:
     build:
       context: .
       dockerfile: Dockerfile.streamlit
     container_name: research_streamlit
     ports:
-      - "8501:8501"
+      - "8503:8501"
     environment:
-      RESEARCH_API_URL: http://research-api:8000
+      API_BASE_URL: http://research-api:8000/api
     depends_on:
       - research-api
     volumes:
-      - ./streamlit_app.py:/app/streamlit_app.py
-    command: streamlit run streamlit_app.py
+      - ./streamlit_ui.py:/app/streamlit_ui.py
+    command: streamlit run streamlit_ui.py --server.address=0.0.0.0
     networks:
       - research-network
+    restart: unless-stopped
 
 volumes:
   postgres_data:
@@ -103,3 +108,8 @@ volumes:
 networks:
   research-network:
     driver: bridge
+  # Optional: Connect to main app's network to access SearxNG directly
+  # Uncomment the line below and set external network name if needed
+  # default:
+  #   external: true
+  #   name: simple_perplexica_default

@@ -1,79 +1,81 @@
 #!/bin/bash
-# Quick start script for research-service development
+# Quick start script for research-service Docker deployment
 
 set -e
 
-echo "🚀 Research Service - Quick Start"
-echo "=================================="
+echo "🚀 Research Service - Docker Quick Start"
+echo "========================================"
 
-# Check if we're in the right directory
-if [ ! -f "requirements.txt" ]; then
-    echo "❌ Error: Please run this script from the research-service directory"
+# Check if Docker is running
+echo ""
+if ! docker info > /dev/null 2>&1; then
+    echo "❌ Docker is not running. Please start Docker Desktop."
     exit 1
 fi
+echo "✓ Docker is running"
 
-# Create virtual environment
+# Check if .env exists
+if [ ! -f .env ]; then
+    echo ""
+    echo "⚠️  .env file not found. Creating from example..."
+    if [ -f .env.example ]; then
+        cp .env.example .env
+        echo "✓ Created .env file"
+        echo ""
+        echo "⚠️  IMPORTANT: Edit .env and add your API keys:"
+        echo "  - OPENROUTER_API_KEY"
+        echo "  - LANGFUSE_PUBLIC_KEY"
+        echo "  - LANGFUSE_SECRET_KEY"
+        echo ""
+        read -p "Press Enter after editing .env file..."
+    else
+        echo "❌ .env.example not found. Please create .env manually."
+        exit 1
+    fi
+fi
+
+# Build and start services
 echo ""
-echo "📦 Creating virtual environment..."
-python -m venv venv
+echo "� Building Docker images..."
+docker-compose build
 
-# Activate virtual environment
-echo "🔧 Activating virtual environment..."
-if [ -f "venv/Scripts/activate" ]; then
-    source venv/Scripts/activate  # Windows Git Bash
-elif [ -f "venv/bin/activate" ]; then
-    source venv/bin/activate  # Linux/Mac
+echo ""
+echo "🚀 Starting all services..."
+docker-compose up -d
+
+echo ""
+echo "⏳ Waiting for services to be healthy..."
+sleep 10
+
+# Check service health
+echo ""
+echo "� Service Status:"
+docker-compose ps
+
+echo ""
+echo "✅ Services are running!"
+echo ""
+echo "📚 Access Points:"
+echo "  🌐 API Server:    http://localhost:8001"
+echo "  📖 API Docs:      http://localhost:8001/api/docs"
+echo "  🎨 Streamlit UI:  http://localhost:8501"
+echo "  💚 Health Check:  http://localhost:8001/api/v1/health"
+echo ""
+echo "📋 Useful Commands:"
+echo "  docker-compose logs -f              # View logs"
+echo "  docker-compose logs -f research-api # API logs only"
+echo "  docker-compose restart              # Restart services"
+echo "  docker-compose down                 # Stop services"
+echo "  docker-compose down -v              # Stop & remove data"
+echo ""
+
+# Test API
+echo "🧪 Testing API..."
+sleep 3
+if curl -s http://localhost:8001/api/v1/health > /dev/null 2>&1; then
+    echo "✅ API is responding!"
+    echo ""
+    echo "🎉 Setup complete! Open http://localhost:8501 in your browser"
 else
-    echo "❌ Error: Could not find activation script"
-    exit 1
+    echo "⚠️  API not ready yet. Check logs: docker-compose logs research-api"
 fi
-
-# Upgrade pip
-echo "⬆️  Upgrading pip..."
-python -m pip install --upgrade pip
-
-# Install dependencies
-echo "📚 Installing dependencies..."
-pip install -r requirements.txt -r requirements-dev.txt
-
-# Create .env if it doesn't exist
-if [ ! -f ".env" ]; then
-    echo "📝 Creating .env from .env.example..."
-    cp .env.example .env
-    echo "⚠️  Please update .env with your actual API keys!"
-fi
-
-# Start PostgreSQL and Redis
-echo ""
-echo "🐘 Starting PostgreSQL and Redis..."
-docker-compose up -d postgres redis
-
-# Wait for PostgreSQL to be ready
-echo "⏳ Waiting for PostgreSQL to be ready..."
-sleep 5
-
-# Run migrations
-echo "🗃️  Running database migrations..."
-alembic upgrade head
-
-# Run tests
-echo ""
-echo "🧪 Running tests..."
-pytest tests/ -v
-
-# Check code quality
-echo ""
-echo "🔍 Checking code quality..."
-echo "  - Ruff linting..."
-ruff check .
-
-echo ""
-echo "✅ Setup complete!"
-echo ""
-echo "Next steps:"
-echo "  1. Update .env with your API keys (OPENROUTER_API_KEY, LANGFUSE keys)"
-echo "  2. Start development server: uvicorn src.api.main:app --reload --port 8001"
-echo "  3. Run tests: pytest tests/"
-echo "  4. Check coverage: pytest --cov=src --cov-report=html tests/"
-echo ""
-echo "📖 See GETTING_STARTED.md for detailed instructions"
