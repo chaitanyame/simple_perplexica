@@ -26,6 +26,7 @@ from src.api.v1.schemas import (
 from src.core.config import settings
 from src.database.models import ResearchSession
 from src.database.session import get_db
+from src.services.crawl.crawl4ai_client import Crawl4AIClient
 from src.services.llm.langfuse_tracer import LangfuseTracer
 from src.services.llm.openrouter_client import OpenRouterClient
 
@@ -40,6 +41,8 @@ async def create_search_agent(
     model: str | None = None,
     max_sources: int = 20,
     timeout: float = 60.0,
+    min_sources: int = 5,
+    min_confidence: float = 0.5,
 ) -> SearchAgent:
     """Create SearchAgent with dependencies.
 
@@ -48,6 +51,8 @@ async def create_search_agent(
         model: Optional LLM model override
         max_sources: Maximum sources to retrieve
         timeout: Search timeout in seconds
+        min_sources: Minimum required sources for valid output
+        min_confidence: Minimum confidence threshold
 
     Returns:
         Configured SearchAgent instance
@@ -71,6 +76,14 @@ async def create_search_agent(
         timeout=timeout,
     )
 
+    # Initialize Crawl4AI client for content extraction
+    crawl_client = Crawl4AIClient(
+        headless=True,
+        browser_type="chromium",
+        max_concurrent=3,
+        timeout=30,
+    )
+
     # Create agent dependencies
     deps = SearchAgentDeps(
         llm_client=llm_client,
@@ -78,8 +91,13 @@ async def create_search_agent(
         db=db,
         searxng_client=searxng_client,
         serperdev_api_key=settings.SERPER_API_KEY or "",
+        crawl_client=crawl_client,
         max_sources=max_sources,
         timeout=timeout,
+        min_sources=min_sources,
+        min_confidence=min_confidence,
+        enable_crawling=True,  # Enable URL crawling
+        max_crawl_urls=5,  # Crawl top 5 URLs
     )
 
     return SearchAgent(deps=deps)
@@ -103,6 +121,7 @@ async def store_search_session(
         id=session_id,
         query=query,
         mode="search",
+        status="completed",
         result=result,
         created_at=datetime.utcnow(),
         completed_at=datetime.utcnow(),
@@ -134,6 +153,7 @@ def convert_search_output_to_response(
     return SearchResponse(
         session_id=session_id,
         query=query,
+        answer=output.answer,
         sub_queries=[
             SubQueryResponse(
                 query=sq.query,
@@ -221,7 +241,7 @@ async def search(
             query=request.query,
             output=output,
             model_used=request.model or settings.LLM_MODEL,
-            trace_url=None,  # TODO: Get from tracer
+            trace_url=None,  # Langfuse trace URL - would require session context propagation
         )
 
         # Store session in database
@@ -240,10 +260,17 @@ async def search(
 
     except Exception as e:
         # Handle unexpected errors
+        import traceback
+
+        error_details = traceback.format_exc()
+        print(f"❌ Search Error: {str(e)}")
+        print(f"Traceback:\n{error_details}")
+
         return JSONResponse(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             content={
                 "error": "search_execution_failed",
                 "message": f"Search execution failed: {str(e)}",
+                "details": error_details if settings.LOG_LEVEL == "DEBUG" else None,
             },
         )

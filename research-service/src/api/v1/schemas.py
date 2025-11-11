@@ -98,6 +98,7 @@ class SearchResponse(BaseModel):
     Attributes:
         session_id: Unique session identifier
         query: Original search query
+        answer: AI-generated answer based on sources
         sub_queries: Decomposed sub-queries
         sources: Retrieved sources
         execution_time: Total execution time (seconds)
@@ -109,6 +110,7 @@ class SearchResponse(BaseModel):
 
     session_id: uuid.UUID = Field(..., description="Session identifier")
     query: str = Field(..., description="Original search query")
+    answer: str = Field(..., description="AI-generated answer based on sources")
     sub_queries: list[SubQueryResponse] = Field(..., description="Decomposed sub-queries")
     sources: list[SearchSourceResponse] = Field(..., description="Retrieved sources")
     execution_time: float = Field(..., ge=0.0, description="Execution time (seconds)")

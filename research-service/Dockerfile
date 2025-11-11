@@ -10,21 +10,30 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
+# Create non-root user early
+RUN useradd -m -u 1000 research
+
 # Install Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install Playwright browsers for Crawl4AI (if needed)
+# Switch to research user for Playwright installation
+USER research
+
+# Install Playwright browsers for Crawl4AI (as research user)
 RUN playwright install chromium
+
+# Switch back to root to install system deps for chromium
+USER root
 RUN playwright install-deps chromium
 
-# Copy application code
+# Copy application code and set ownership
 COPY src/ ./src/
 COPY tests/ ./tests/
 COPY pyproject.toml .
+RUN chown -R research:research /app
 
-# Create non-root user
-RUN useradd -m -u 1000 research && chown -R research:research /app
+# Switch to research user for runtime
 USER research
 
 # Expose port
