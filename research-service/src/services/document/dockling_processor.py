@@ -23,6 +23,19 @@ import structlog
 from docling.datamodel.base_models import DocumentStream  # type: ignore[attr-defined]
 from docling.document_converter import DocumentConverter
 
+# Fallback PDF extractors
+try:
+    import pdfplumber
+    PDFPLUMBER_AVAILABLE = True
+except ImportError:
+    PDFPLUMBER_AVAILABLE = False
+
+try:
+    from PyPDF2 import PdfReader
+    PYPDF2_AVAILABLE = True
+except ImportError:
+    PYPDF2_AVAILABLE = False
+
 logger = structlog.get_logger(__name__)
 
 
@@ -170,16 +183,83 @@ class DocklingProcessor:
 
         logger.info(f"Processing document from bytes: {filename}", size=len(content))
 
-        try:
-            # Create stream
-            stream = DocumentStream(name=filename, stream=BytesIO(content))
-
-            # Run conversion in executor
-            result = await asyncio.to_thread(self._convert_document, stream)
-            return result
-        except Exception as e:
-            logger.error(f"Document conversion failed: {e}", filename=filename)
-            raise DocumentProcessingError(f"Document conversion failed: {e}") from e
+        # For PDFs, try Dockling first, then fallback to simpler extractors
+        is_pdf = path.suffix.lower() == '.pdf'
+        
+        if is_pdf:
+            # Try Dockling first
+            try:
+                stream = DocumentStream(name=filename, stream=BytesIO(content))
+                result = await asyncio.to_thread(self._convert_document, stream)
+                logger.info(f"✅ Dockling extraction successful: {filename}")
+                return result
+            except Exception as dockling_error:
+                logger.warning(
+                    f"⚠️  Dockling failed for {filename}, trying fallback extractors",
+                    error=str(dockling_error)[:100]
+                )
+                
+                # Try pdfplumber fallback
+                if PDFPLUMBER_AVAILABLE:
+                    try:
+                        logger.info(f"Trying pdfplumber for {filename}")
+                        text = await asyncio.to_thread(self._extract_pdf_with_pdfplumber, content)
+                        
+                        if text and len(text.strip()) > 100:  # Ensure we got meaningful content
+                            chunks = self._chunk_content(text)
+                            logger.info(
+                                f"✅ pdfplumber extraction successful: {filename}",
+                                content_length=len(text),
+                                chunks=len(chunks)
+                            )
+                            return ProcessedDocument(
+                                content=text,
+                                chunks=chunks,
+                                metadata={"format": "pdf", "extractor": "pdfplumber"},
+                                source_url=source_url or filename,
+                                format="pdf"
+                            )
+                    except Exception as pdfplumber_error:
+                        logger.warning(f"pdfplumber failed: {pdfplumber_error}")
+                
+                # Try PyPDF2 fallback
+                if PYPDF2_AVAILABLE:
+                    try:
+                        logger.info(f"Trying PyPDF2 for {filename}")
+                        text = await asyncio.to_thread(self._extract_pdf_with_pypdf2, content)
+                        
+                        if text and len(text.strip()) > 100:
+                            chunks = self._chunk_content(text)
+                            logger.info(
+                                f"✅ PyPDF2 extraction successful: {filename}",
+                                content_length=len(text),
+                                chunks=len(chunks)
+                            )
+                            return ProcessedDocument(
+                                content=text,
+                                chunks=chunks,
+                                metadata={"format": "pdf", "extractor": "pypdf2"},
+                                source_url=source_url or filename,
+                                format="pdf"
+                            )
+                    except Exception as pypdf2_error:
+                        logger.warning(f"PyPDF2 failed: {pypdf2_error}")
+                
+                # All extractors failed
+                logger.error(f"❌ All PDF extractors failed for {filename}")
+                raise DocumentProcessingError(
+                    f"All PDF extraction methods failed. Dockling error: {str(dockling_error)[:100]}"
+                ) from dockling_error
+        
+        else:
+            # Non-PDF documents: use Dockling only
+            try:
+                stream = DocumentStream(name=filename, stream=BytesIO(content))
+                result = await asyncio.to_thread(self._convert_document, stream)
+                return result
+            except Exception as e:
+                logger.error(f"Document conversion failed: {e}", filename=filename)
+                raise DocumentProcessingError(f"Document conversion failed: {e}") from e
 
     def _convert_document(self, source: Any) -> ProcessedDocument:
         """Convert document using Dockling (runs in thread pool).
@@ -196,9 +276,10 @@ class DocklingProcessor:
         # Convert document
         conversion_result = converter.convert(source)
 
-        # Check status
-        if conversion_result.status != "SUCCESS":
-            raise DocumentProcessingError(f"Conversion status: {conversion_result.status}")
+        # Check status - conversion_result.status is an enum (ConversionStatus.SUCCESS)
+        # We can access the document if conversion didn't completely fail
+        if not conversion_result.document:
+            raise DocumentProcessingError(f"Conversion failed: no document returned")
 
         doc = conversion_result.document
 
@@ -237,6 +318,61 @@ class DocklingProcessor:
             source_url=source_url,
             format=format_ext,
         )
+
+    def _extract_pdf_with_pdfplumber(self, content: bytes) -> str:
+        """Extract text from PDF using pdfplumber (fallback method).
+
+        Args:
+            content: PDF file content as bytes
+
+        Returns:
+            Extracted text content
+
+        Raises:
+            DocumentProcessingError: If extraction fails
+        """
+        if not PDFPLUMBER_AVAILABLE:
+            raise DocumentProcessingError("pdfplumber not available")
+
+        try:
+            with pdfplumber.open(BytesIO(content)) as pdf:
+                text_parts = []
+                for page in pdf.pages[:self.max_pages]:
+                    page_text = page.extract_text()
+                    if page_text:
+                        text_parts.append(page_text)
+                
+                return "\n\n".join(text_parts)
+        except Exception as e:
+            raise DocumentProcessingError(f"pdfplumber extraction failed: {e}") from e
+
+    def _extract_pdf_with_pypdf2(self, content: bytes) -> str:
+        """Extract text from PDF using PyPDF2 (fallback method).
+
+        Args:
+            content: PDF file content as bytes
+
+        Returns:
+            Extracted text content
+
+        Raises:
+            DocumentProcessingError: If extraction fails
+        """
+        if not PYPDF2_AVAILABLE:
+            raise DocumentProcessingError("PyPDF2 not available")
+
+        try:
+            reader = PdfReader(BytesIO(content))
+            text_parts = []
+            
+            for page_num, page in enumerate(reader.pages[:self.max_pages]):
+                page_text = page.extract_text()
+                if page_text:
+                    text_parts.append(page_text)
+            
+            return "\n\n".join(text_parts)
+        except Exception as e:
+            raise DocumentProcessingError(f"PyPDF2 extraction failed: {e}") from e
 
     def _chunk_content(self, content: str) -> list[str]:
         """Chunk content into overlapping segments.

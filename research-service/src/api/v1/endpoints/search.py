@@ -27,6 +27,8 @@ from src.core.config import settings
 from src.database.models import ResearchSession
 from src.database.session import get_db
 from src.services.crawl.crawl4ai_client import Crawl4AIClient
+from src.services.document.dockling_processor import DocklingProcessor
+from src.services.embedding.embedding_service import EmbeddingService
 from src.services.llm.langfuse_tracer import LangfuseTracer
 from src.services.llm.openrouter_client import OpenRouterClient
 
@@ -84,6 +86,21 @@ async def create_search_agent(
         timeout=30,
     )
 
+    # Initialize Dockling processor for PDF/document extraction
+    document_processor = DocklingProcessor(
+        max_file_size=50_000_000,  # 50MB
+        max_pages=100,
+        chunk_size=1000,
+        chunk_overlap=200,
+    )
+
+    # Initialize embedding service for semantic reranking
+    embedding_service = EmbeddingService(
+        model_name="all-MiniLM-L6-v2",
+        reranker_model_name=settings.RERANKER_MODEL,
+        device="cpu",
+    )
+
     # Create agent dependencies
     deps = SearchAgentDeps(
         llm_client=llm_client,
@@ -92,12 +109,16 @@ async def create_search_agent(
         searxng_client=searxng_client,
         serperdev_api_key=settings.SERPER_API_KEY or "",
         crawl_client=crawl_client,
+        document_processor=document_processor,
+        embedding_service=embedding_service,
         max_sources=max_sources,
         timeout=timeout,
         min_sources=min_sources,
         min_confidence=min_confidence,
         enable_crawling=True,  # Enable URL crawling
         max_crawl_urls=5,  # Crawl top 5 URLs
+        enable_reranking=settings.ENABLE_RERANKING,  # Enable semantic reranking
+        rerank_weight=settings.RERANK_WEIGHT,  # Weight for semantic score
     )
 
     return SearchAgent(deps=deps)
@@ -136,6 +157,7 @@ def convert_search_output_to_response(
     query: str,
     output: SearchOutput,
     model_used: str,
+    mode: str = "balanced",
     trace_url: str | None = None,
 ) -> SearchResponse:
     """Convert SearchOutput to SearchResponse.
@@ -145,6 +167,7 @@ def convert_search_output_to_response(
         query: Original query
         output: SearchAgent output
         model_used: LLM model used
+        mode: Search mode used (speed/balanced/deep)
         trace_url: Langfuse trace URL
 
     Returns:
@@ -168,10 +191,13 @@ def convert_search_output_to_response(
                 url=src.url,
                 snippet=src.snippet,
                 relevance=src.relevance,
+                semantic_score=src.semantic_score,
+                final_score=src.final_score,
                 source_type=src.source_type,
             )
             for src in output.sources
         ],
+        mode=mode,
         execution_time=output.execution_time,
         confidence=output.confidence,
         model_used=model_used,
@@ -212,26 +238,35 @@ async def search(
     session_id = uuid.uuid4()
 
     try:
+        # Get mode configuration
+        from src.core.search_modes import get_mode_from_string
+        search_mode = get_mode_from_string(request.mode)
+        config = search_mode.config
+        
+        # Use request parameters or mode defaults
+        max_sources = request.max_sources if request.max_sources is not None else config.max_sources
+        timeout = request.timeout if request.timeout is not None else config.timeout
+        
         # Create SearchAgent
         agent = await create_search_agent(
             db=db,
             model=request.model,
-            max_sources=request.max_sources,
-            timeout=float(request.timeout),
+            max_sources=max_sources,
+            timeout=float(timeout),
         )
 
-        # Execute search with timeout
+        # Execute search with timeout and mode
         try:
             output = await asyncio.wait_for(
-                agent.run(request.query),
-                timeout=float(request.timeout),
+                agent.run(request.query, mode=search_mode),
+                timeout=float(timeout),
             )
         except TimeoutError:
             return JSONResponse(
                 status_code=status.HTTP_504_GATEWAY_TIMEOUT,
                 content={
                     "error": "search_timeout",
-                    "message": f"Search exceeded timeout of {request.timeout}s",
+                    "message": f"Search exceeded timeout of {timeout}s",
                 },
             )
 
@@ -241,6 +276,7 @@ async def search(
             query=request.query,
             output=output,
             model_used=request.model or settings.LLM_MODEL,
+            mode=request.mode or "balanced",
             trace_url=None,  # Langfuse trace URL - would require session context propagation
         )
 

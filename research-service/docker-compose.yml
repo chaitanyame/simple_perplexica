@@ -67,6 +67,11 @@ services:
       # LLM Model
       LLM_MODEL: ${LLM_MODEL:-anthropic/claude-3.5-sonnet}
       
+      # PyTorch/HuggingFace Settings (fix Dockling issues)
+      TOKENIZERS_PARALLELISM: "false"
+      OMP_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      
       # App settings
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       API_RATE_LIMIT: ${API_RATE_LIMIT:-10/minute}

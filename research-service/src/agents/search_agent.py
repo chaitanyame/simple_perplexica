@@ -28,7 +28,10 @@ from pydantic import BaseModel, Field
 from pydantic_ai import ModelRetry
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.core.search_modes import SearchMode, get_mode_from_string
 from src.services.crawl.crawl4ai_client import Crawl4AIClient
+from src.services.document.dockling_processor import DocklingProcessor
+from src.services.embedding.embedding_service import EmbeddingService
 from src.services.llm.langfuse_tracer import LangfuseTracer
 from src.services.llm.openrouter_client import OpenRouterClient
 
@@ -59,7 +62,9 @@ class SearchSource(BaseModel):
         url: Source URL
         snippet: Text excerpt/snippet from search results
         content: Full extracted content from URL (populated by crawling)
-        relevance: Relevance score (0.0-1.0)
+        relevance: Relevance score from search API (0.0-1.0)
+        semantic_score: Cross-encoder reranking score (0.0-1.0, optional)
+        final_score: Combined score for ranking (0.0-1.0)
         source_type: Source classification (web/academic/news)
     """
 
@@ -68,7 +73,14 @@ class SearchSource(BaseModel):
     snippet: str
     content: str | None = None  # Full content from crawling
     relevance: float = Field(ge=0.0, le=1.0)
+    semantic_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    final_score: float = Field(default=0.0, ge=0.0, le=1.0)
     source_type: str = Field(pattern=r"^(web|academic|news)$")
+    
+    def model_post_init(self, __context) -> None:
+        """Initialize final_score if not provided."""
+        if self.final_score == 0.0:
+            self.final_score = self.relevance
 
 
 class QueryDecomposition(BaseModel):
@@ -119,10 +131,13 @@ class SearchAgentDeps:
         searxng_client: HTTP client for SearxNG API
         serperdev_api_key: API key for SerperDev service
         crawl_client: Crawl4AI client for URL content extraction
+        embedding_service: Embedding service for semantic reranking
         max_sources: Maximum number of sources to return (default: 20)
         timeout: Search timeout in seconds (default: 60.0)
         enable_crawling: Whether to crawl URLs for full content (default: True)
         max_crawl_urls: Maximum URLs to crawl for content (default: 5)
+        enable_reranking: Whether to use semantic reranking (default: True)
+        rerank_weight: Weight for semantic score in final ranking (default: 0.6)
     """
 
     llm_client: OpenRouterClient
@@ -131,12 +146,16 @@ class SearchAgentDeps:
     searxng_client: httpx.AsyncClient
     serperdev_api_key: str
     crawl_client: Crawl4AIClient
+    document_processor: DocklingProcessor
+    embedding_service: EmbeddingService
     max_sources: int = 20
     timeout: float = 60.0
     min_sources: int = 5  # Minimum required sources for valid output
     min_confidence: float = 0.5  # Minimum confidence threshold
     enable_crawling: bool = True  # Enable URL crawling
     max_crawl_urls: int = 5  # Maximum URLs to crawl
+    enable_reranking: bool = True  # Enable semantic reranking
+    rerank_weight: float = 0.6  # Weight for semantic score (0.0-1.0)
 
 
 # =============================================================================
@@ -458,8 +477,35 @@ Respond with valid JSON only."""
 
         return sources
 
+    def _is_document_url(self, url: str) -> bool:
+        """Check if URL points to a document (PDF, DOCX, etc.).
+
+        Args:
+            url: URL to check
+
+        Returns:
+            True if URL is a document, False otherwise
+        """
+        url_lower = url.lower()
+        doc_extensions = ['.pdf', '.docx', '.doc', '.xlsx', '.xls', '.pptx', '.ppt']
+        
+        # Check file extension in path
+        for ext in doc_extensions:
+            if ext in url_lower:
+                return True
+        
+        # Check for common PDF URL patterns
+        if 'pdf' in url_lower or 'download' in url_lower or 'arxiv.org/pdf' in url_lower:
+            return True
+            
+        return False
+
     async def _crawl_single_url(self, source: SearchSource) -> SearchSource:
         """Crawl a single URL and update source with content.
+        
+        Routes to appropriate processor:
+        - PDF/DOCX/etc → DocklingProcessor for structured extraction
+        - Regular web pages → Crawl4AI for HTML crawling
 
         Args:
             source: Search source to enrich
@@ -468,32 +514,64 @@ Respond with valid JSON only."""
             Same source with content field populated
         """
         try:
-            logger.info(f"🕷️  Crawling: {source.url}")
-            crawled_page = await self.deps.crawl_client.crawl_url(
-                url=source.url,
-                word_count_threshold=50,  # Filter out short/nav blocks
-            )
-
-            if crawled_page.success and crawled_page.markdown:
-                # Use markdown content (cleaner than HTML)
-                source.content = crawled_page.markdown[:10000]  # Limit to 10K chars
-                logger.info(
-                    f"✅ Crawled {source.url}: {len(source.content)} chars"
-                )
+            # Check if this is a document URL
+            if self._is_document_url(source.url):
+                logger.info(f"� Processing document: {source.url}")
+                
+                # Download document content
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    response = await client.get(source.url, follow_redirects=True)
+                    response.raise_for_status()
+                    
+                    # Extract filename from URL or Content-Disposition
+                    filename = source.url.split('/')[-1]
+                    if '?' in filename:
+                        filename = filename.split('?')[0]
+                    if not any(ext in filename.lower() for ext in ['.pdf', '.docx', '.doc', '.xlsx', '.xls', '.pptx', '.ppt']):
+                        filename += '.pdf'  # Default to PDF if no extension
+                    
+                    # Process document with Dockling
+                    processed_doc = await self.deps.document_processor.process_document_bytes(
+                        content=response.content,
+                        filename=filename,
+                        source_url=source.url
+                    )
+                    
+                    # Use processed markdown content
+                    source.content = processed_doc.content[:10000]  # Limit to 10K chars
+                    logger.info(
+                        f"✅ Processed document {source.url}: {len(source.content)} chars, "
+                        f"{len(processed_doc.chunks)} chunks"
+                    )
+                    
             else:
-                logger.warning(
-                    f"⚠️  Crawl failed for {source.url}: {crawled_page.error_message}"
+                # Regular web page - use Crawl4AI
+                logger.info(f"�🕷️  Crawling web page: {source.url}")
+                crawled_page = await self.deps.crawl_client.crawl_url(
+                    url=source.url,
+                    word_count_threshold=50,  # Filter out short/nav blocks
                 )
+
+                if crawled_page.success and crawled_page.markdown:
+                    # Use markdown content (cleaner than HTML)
+                    source.content = crawled_page.markdown[:10000]  # Limit to 10K chars
+                    logger.info(
+                        f"✅ Crawled {source.url}: {len(source.content)} chars"
+                    )
+                else:
+                    logger.warning(
+                        f"⚠️  Crawl failed for {source.url}: {crawled_page.error_message}"
+                    )
 
         except Exception as e:
-            logger.error(f"❌ Error crawling {source.url}: {e}")
+            logger.error(f"❌ Error processing {source.url}: {e}")
 
         return source
 
     async def rank_results(
         self, sources: list[SearchSource], original_query: str
     ) -> list[SearchSource]:
-        """Rank and filter results by relevance.
+        """Rank and filter results by relevance with optional semantic reranking.
 
         Args:
             sources: Raw search results
@@ -504,13 +582,70 @@ Respond with valid JSON only."""
 
         Example:
             >>> ranked = await agent.rank_results(sources, "AI agents")
-            >>> assert ranked[0].relevance >= ranked[-1].relevance
+            >>> assert ranked[0].final_score >= ranked[-1].final_score
         """
+        if not sources:
+            return []
+
         # Filter low-quality results (relevance < 0.5)
         filtered = [s for s in sources if s.relevance >= 0.5]
 
-        # Sort by relevance (descending)
-        filtered.sort(key=lambda s: s.relevance, reverse=True)
+        if not filtered:
+            return []
+
+        # Apply semantic reranking if enabled
+        if self.deps.enable_reranking:
+            try:
+                logger.info(
+                    "Applying semantic reranking",
+                    query=original_query,
+                    num_candidates=len(filtered),
+                )
+
+                # Prepare documents for reranking (use content if available, else snippet)
+                documents = [
+                    (s.content if s.content else s.snippet)
+                    for s in filtered
+                ]
+
+                # Get semantic scores from cross-encoder
+                rerank_results = await self.deps.embedding_service.rerank(
+                    query=original_query,
+                    documents=documents,
+                )
+
+                # Map semantic scores back to sources
+                for idx, score in rerank_results:
+                    filtered[idx].semantic_score = score
+
+                    # Compute final score as weighted combination
+                    # final_score = (1 - w) * relevance + w * semantic_score
+                    relevance_weight = 1.0 - self.deps.rerank_weight
+                    filtered[idx].final_score = (
+                        relevance_weight * filtered[idx].relevance
+                        + self.deps.rerank_weight * score
+                    )
+
+                logger.info(
+                    "Semantic reranking complete",
+                    reranked_count=len(rerank_results),
+                )
+
+            except Exception as e:
+                logger.warning(
+                    "Semantic reranking failed, falling back to relevance",
+                    error=str(e),
+                )
+                # Fallback: use relevance as final_score
+                for source in filtered:
+                    source.final_score = source.relevance
+        else:
+            # No reranking: use relevance as final_score
+            for source in filtered:
+                source.final_score = source.relevance
+
+        # Sort by final_score (descending)
+        filtered.sort(key=lambda s: s.final_score, reverse=True)
 
         # Return top max_sources
         return filtered[: self.max_sources]
@@ -552,22 +687,49 @@ Respond with valid JSON only."""
         logger.info(f"📊 Using {enriched_count}/7 sources with full content, {7-enriched_count} with snippets only")
 
         # Build prompt for answer generation
-        prompt = f"""You are a helpful search assistant. Based on the search results below, provide a comprehensive answer to the user's question.
+        prompt = f"""You are a helpful search assistant. Answer the user's question by extracting and explaining SPECIFIC information from the search results.
 
 User Question: {query}
 
 Search Results:
 {context}
 
-Instructions:
-- Provide a clear, comprehensive answer based on the search results
-- Cite sources using [1], [2], etc. when referencing specific information
-- If information is contradictory, mention different perspectives
-- Be factual and accurate
-- Write in a natural, conversational tone
-- If the sources don't fully answer the question, acknowledge that
+MANDATORY REQUIREMENTS:
 
-Answer:"""
+1. EXTRACT SPECIFIC DETAILS - For EVERY point you make, include:
+   ✓ Exact names, products, services, features mentioned in sources
+   ✓ Specific numbers, dates, percentages, metrics
+   ✓ Direct facts and statements from the sources
+   ✗ NO generic statements like "continues to evolve" or "recent updates"
+   ✗ NO meta-commentary about "the search results show..."
+
+2. EXPLAIN EVERY ITEM - When listing products, services, or features:
+   ✗ BAD: "Azure AI Foundry, Azure AI Search, Azure OpenAI [7]"
+   ✓ GOOD: 
+     "- Azure AI Foundry: Platform for building AI applications [7]
+      - Azure AI Search: Vector search and retrieval service [7]
+      - Azure OpenAI: Access to GPT-4 and other models [7]"
+   
+   RULE: Never just list names - always add what they do/are
+
+3. MORE EXAMPLES:
+   ✗ BAD: "Growth of 31% [1], stock up 17.9% [1]"
+   ✓ GOOD: "Azure cloud revenue grew 31% year-over-year [1], contributing to Microsoft's stock price increase of 17.9% year-to-date [1], driven by enterprise cloud adoption"
+   
+   ✗ BAD: "Microsoft Ignite 2025 on November 17-21 [2]"
+   ✓ GOOD: "Microsoft Ignite 2025 will take place November 17-21, 2025 [2], featuring keynotes on Azure AI capabilities, hands-on labs for developers, and announcements of new cloud services [2]"
+
+4. STRUCTURE with numbered sections and bullet points with descriptions
+
+5. CITE EVERYTHING with [number] after each fact
+
+6. 500+ words - extract and EXPLAIN more details, don't just list
+
+7. NO apologizing or hedging
+
+8. Add context from sources for every claim - "what", "why", "how", "when"
+
+Write a detailed answer with full explanations for everything:"""
 
         logger.info("🤖 Generating answer from sources using LLM...")
 
@@ -575,6 +737,7 @@ Answer:"""
             response = await self.deps.llm_client.chat(
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.7,
+                max_tokens=2048,  # Allow longer, more detailed responses
             )
 
             # Extract answer from response
@@ -636,50 +799,110 @@ Answer:"""
 
         return output
 
-    async def run(self, query: str) -> SearchOutput:
-        """Execute full search workflow.
+    async def run(
+        self,
+        query: str,
+        mode: SearchMode | str | None = None,
+    ) -> SearchOutput:
+        """Execute full search workflow with configurable mode.
 
         Args:
             query: User's search query
+            mode: Search mode (SPEED/BALANCED/DEEP) or mode string or None (defaults to BALANCED)
 
         Returns:
             SearchOutput with results, metadata
 
         Example:
-            >>> result = await agent.run("What are AI agents?")
+            >>> result = await agent.run("What are AI agents?", mode=SearchMode.DEEP)
             >>> print(f"Confidence: {result.confidence:.2f}")
+            >>> print(f"Sources: {len(result.sources)}")
         """
         import time
 
-        start_time = time.time()
-
-        # 1. Decompose query
-        sub_queries = await self.decompose_query(query)
-
-        # 2. Coordinate search
-        raw_sources = await self.coordinate_search(sub_queries)
-
-        # 3. Enrich sources with full content (crawl URLs)
-        enriched_sources = await self.enrich_sources_with_content(raw_sources)
-
-        # 4. Rank results
-        ranked_sources = await self.rank_results(enriched_sources, query)
-
-        # 5. Generate answer from sources
-        answer = await self.generate_answer(query, ranked_sources)
-
-        execution_time = time.time() - start_time
-
-        # 6. Build output
-        output = SearchOutput(
-            answer=answer,
-            sub_queries=sub_queries,
-            sources=ranked_sources,
-            execution_time=execution_time,
-            confidence=0.8,  # Default confidence
+        # Parse mode
+        if isinstance(mode, str):
+            search_mode = get_mode_from_string(mode)
+        elif mode is None:
+            search_mode = SearchMode.BALANCED
+        else:
+            search_mode = mode
+        
+        config = search_mode.config
+        
+        logger.info(
+            "Starting search with mode",
+            query=query,
+            mode=search_mode.value,
+            max_sources=config.max_sources,
+            timeout=config.timeout,
         )
 
-        # 7. Validate output
-        output = await self.validate_output(output)
+        start_time = time.time()
 
-        return output
+        # Apply mode configuration
+        original_max_sources = self.max_sources
+        original_enable_reranking = self.deps.enable_reranking
+        original_max_crawl_urls = self.deps.max_crawl_urls
+        
+        self.max_sources = config.max_sources
+        self.deps.enable_reranking = config.enable_reranking
+        
+        # Adjust max_crawl_urls based on mode for better performance
+        # BALANCED: crawl top 5 (half of sources) for speed
+        # DEEP: crawl all sources for comprehensiveness
+        if search_mode == SearchMode.BALANCED:
+            self.deps.max_crawl_urls = min(5, config.max_sources // 2)
+        elif search_mode == SearchMode.DEEP:
+            self.deps.max_crawl_urls = config.max_sources
+        # SPEED doesn't crawl, so no need to set
+
+        try:
+            # 1. Decompose query
+            sub_queries = await self.decompose_query(query)
+
+            # 2. Coordinate search
+            raw_sources = await self.coordinate_search(sub_queries)
+
+            # 3. Enrich sources with full content (crawl URLs) - only if enabled by mode
+            if config.enable_crawling:
+                enriched_sources = await self.enrich_sources_with_content(raw_sources)
+            else:
+                # SPEED mode: skip crawling, use snippets only
+                logger.info("Crawling disabled by mode, using snippets only")
+                enriched_sources = raw_sources
+
+            # 4. Rank results (reranking controlled by mode config)
+            ranked_sources = await self.rank_results(enriched_sources, query)
+
+            # 5. Generate answer from sources
+            answer = await self.generate_answer(query, ranked_sources)
+
+            execution_time = time.time() - start_time
+
+            # 6. Build output
+            output = SearchOutput(
+                answer=answer,
+                sub_queries=sub_queries,
+                sources=ranked_sources,
+                execution_time=execution_time,
+                confidence=0.8,  # Default confidence
+            )
+
+            # 7. Validate output
+            output = await self.validate_output(output)
+
+            logger.info(
+                "Search complete",
+                mode=search_mode.value,
+                num_sources=len(ranked_sources),
+                execution_time=execution_time,
+            )
+
+            return output
+        
+        finally:
+            # Restore original settings
+            self.max_sources = original_max_sources
+            self.deps.enable_reranking = original_enable_reranking
+            self.deps.max_crawl_urls = original_max_crawl_urls

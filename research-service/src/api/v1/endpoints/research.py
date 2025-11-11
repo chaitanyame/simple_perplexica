@@ -164,19 +164,27 @@ async def research(
     session_id = uuid.uuid4()
 
     try:
+        # Get mode configuration
+        from src.core.search_modes import get_mode_from_string
+        search_mode = get_mode_from_string(request.mode)
+        config = search_mode.config
+        
+        # Use request parameter or mode default for timeout
+        timeout = request.timeout if request.timeout is not None else config.timeout
+        
         # Create ResearchAgent
         agent = await create_research_agent(
             db=db,
             model=request.model,
             max_iterations=request.max_iterations,
-            timeout=float(request.timeout),
+            timeout=float(timeout),
         )
 
-        # Execute research with timeout
+        # Execute research with timeout and mode
         try:
             output = await asyncio.wait_for(
-                agent.run(request.query),
-                timeout=float(request.timeout),
+                agent.run(request.query, mode=search_mode),
+                timeout=float(timeout),
             )
         except TimeoutError:
             return JSONResponse(

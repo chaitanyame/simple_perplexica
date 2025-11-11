@@ -22,8 +22,9 @@ class SearchRequest(BaseModel):
 
     Attributes:
         query: Search query (1-1000 chars)
-        max_sources: Maximum sources to retrieve (5-50, default 20)
-        timeout: Timeout in seconds (10-300, default 60)
+        mode: Search mode (speed/balanced/deep, default 'balanced')
+        max_sources: Maximum sources to retrieve (5-50, default 20) - overridden by mode if not specified
+        timeout: Timeout in seconds (10-300, default 60) - overridden by mode if not specified
         model: LLM model to use (default from config)
     """
 
@@ -34,17 +35,21 @@ class SearchRequest(BaseModel):
         description="Search query",
         examples=["What is Pydantic AI?"],
     )
-    max_sources: int = Field(
-        20,
+    mode: Literal["speed", "balanced", "deep"] | None = Field(
+        "balanced",
+        description="Search mode: 'speed' (fast, 5 sources), 'balanced' (default, 10 sources), 'deep' (comprehensive, 20 sources)",
+    )
+    max_sources: int | None = Field(
+        None,
         ge=5,
         le=50,
-        description="Maximum number of sources to retrieve",
+        description="Maximum number of sources to retrieve (overrides mode default if provided)",
     )
-    timeout: int = Field(
-        60,
+    timeout: int | None = Field(
+        None,
         ge=10,
         le=300,
-        description="Timeout in seconds",
+        description="Timeout in seconds (overrides mode default if provided)",
     )
     model: str | None = Field(
         None,
@@ -67,14 +72,18 @@ class SearchSourceResponse(BaseModel):
         title: Source title
         url: Source URL
         snippet: Content excerpt
-        relevance: Relevance score (0-1)
+        relevance: Relevance score from search API (0-1)
+        semantic_score: Cross-encoder reranking score (0-1, optional)
+        final_score: Combined score used for ranking (0-1)
         source_type: Source category
     """
 
     title: str = Field(..., description="Source title")
     url: str = Field(..., description="Source URL")
     snippet: str = Field(..., description="Content excerpt")
-    relevance: float = Field(..., ge=0.0, le=1.0, description="Relevance score")
+    relevance: float = Field(..., ge=0.0, le=1.0, description="Search API relevance score")
+    semantic_score: float | None = Field(None, ge=0.0, le=1.0, description="Semantic reranking score")
+    final_score: float = Field(..., ge=0.0, le=1.0, description="Final ranking score")
     source_type: Literal["web", "academic", "news"] = Field(..., description="Source category")
 
 
@@ -101,6 +110,7 @@ class SearchResponse(BaseModel):
         answer: AI-generated answer based on sources
         sub_queries: Decomposed sub-queries
         sources: Retrieved sources
+        mode: Search mode used (speed/balanced/deep)
         execution_time: Total execution time (seconds)
         confidence: Result confidence (0-1)
         model_used: LLM model used
@@ -113,6 +123,7 @@ class SearchResponse(BaseModel):
     answer: str = Field(..., description="AI-generated answer based on sources")
     sub_queries: list[SubQueryResponse] = Field(..., description="Decomposed sub-queries")
     sources: list[SearchSourceResponse] = Field(..., description="Retrieved sources")
+    mode: str = Field("balanced", description="Search mode used (speed/balanced/deep)")
     execution_time: float = Field(..., ge=0.0, description="Execution time (seconds)")
     confidence: float = Field(..., ge=0.0, le=1.0, description="Result confidence")
     model_used: str = Field(..., description="LLM model used")
@@ -130,8 +141,9 @@ class ResearchRequest(BaseModel):
 
     Attributes:
         query: Research question (1-1000 chars)
+        mode: Search mode (speed/balanced/deep, default 'balanced')
         max_iterations: Maximum research iterations (1-10, default 5)
-        timeout: Timeout in seconds (60-600, default 300)
+        timeout: Timeout in seconds (60-600, default 300) - overridden by mode if not specified
         model: LLM model to use (default from config)
     """
 
@@ -142,17 +154,21 @@ class ResearchRequest(BaseModel):
         description="Research question",
         examples=["What are AI agents and how do they work?"],
     )
+    mode: Literal["speed", "balanced", "deep"] | None = Field(
+        "balanced",
+        description="Search mode: 'speed' (fast, 5 sources), 'balanced' (default, 10 sources), 'deep' (comprehensive, 20 sources)",
+    )
     max_iterations: int = Field(
         5,
         ge=1,
         le=10,
         description="Maximum research iterations",
     )
-    timeout: int = Field(
-        300,
+    timeout: int | None = Field(
+        None,
         ge=60,
         le=600,
-        description="Timeout in seconds",
+        description="Timeout in seconds (overrides mode default if provided)",
     )
     model: str | None = Field(
         None,

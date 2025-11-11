@@ -65,6 +65,22 @@ class Settings(BaseSettings):
         default="sentence-transformers/all-MiniLM-L6-v2", description="Local embedding model name"
     )
     EMBEDDING_DIMENSION: int = Field(default=384, description="Embedding vector dimension")
+    
+    # Reranking Settings
+    RERANKER_MODEL: str = Field(
+        default="cross-encoder/ms-marco-MiniLM-L-6-v2",
+        description="Cross-encoder model for semantic reranking"
+    )
+    ENABLE_RERANKING: bool = Field(
+        default=True,
+        description="Enable semantic reranking with cross-encoder"
+    )
+    RERANK_WEIGHT: float = Field(
+        default=0.6,
+        ge=0.0,
+        le=1.0,
+        description="Weight for semantic score in final ranking (0.0-1.0)"
+    )
 
     # LLM Models
     LLM_MODEL: str = Field(

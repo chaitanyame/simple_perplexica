@@ -1,7 +1,8 @@
 """Sentence-Transformers embedding service.
 
 This module provides text embedding functionality using sentence-transformers
-library with the all-MiniLM-L6-v2 model (384 dimensions).
+library with the all-MiniLM-L6-v2 model (384 dimensions) and cross-encoder
+reranking with ms-marco-MiniLM-L-6-v2.
 """
 
 from __future__ import annotations
@@ -9,7 +10,7 @@ from __future__ import annotations
 import asyncio
 
 import numpy as np
-from sentence_transformers import SentenceTransformer
+from sentence_transformers import SentenceTransformer, CrossEncoder
 
 
 class EmbeddingError(Exception):
@@ -25,6 +26,7 @@ class EmbeddingService:
         model_name: Name of the sentence-transformers model
         dimension: Dimensionality of embeddings (384 for all-MiniLM-L6-v2)
         device: Device for computation ('cpu' or 'cuda')
+        reranker_model_name: Name of the cross-encoder model for reranking
 
     Example:
         >>> service = EmbeddingService()
@@ -36,23 +38,27 @@ class EmbeddingService:
     def __init__(
         self,
         model_name: str = "all-MiniLM-L6-v2",
+        reranker_model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2",
         device: str = "cpu",
     ) -> None:
         """Initialize embedding service.
 
         Args:
             model_name: Name of sentence-transformers model
+            reranker_model_name: Name of cross-encoder model for reranking
             device: Device for computation ('cpu' or 'cuda')
 
         Raises:
             EmbeddingError: If model loading fails
         """
         self.model_name = model_name
+        self.reranker_model_name = reranker_model_name
         self.device = device
         self.dimension = 384  # all-MiniLM-L6-v2 produces 384D embeddings
 
-        # Load model (lazy-loaded on first access)
+        # Load models (lazy-loaded on first access)
         self._model: SentenceTransformer | None = None
+        self._reranker: CrossEncoder | None = None
 
     @property
     def model(self) -> SentenceTransformer:
@@ -153,6 +159,86 @@ class EmbeddingService:
 
         except Exception as e:
             raise EmbeddingError(f"Failed to encode batch: {e}") from e
+
+    @property
+    def reranker(self) -> CrossEncoder:
+        """Get or load the cross-encoder reranker model.
+
+        Returns:
+            Loaded CrossEncoder model
+
+        Raises:
+            EmbeddingError: If model loading fails
+        """
+        if self._reranker is None:
+            try:
+                self._reranker = CrossEncoder(self.reranker_model_name, device=self.device)
+            except Exception as e:
+                raise EmbeddingError(f"Failed to load reranker '{self.reranker_model_name}': {e}") from e
+
+        return self._reranker
+
+    async def rerank(
+        self,
+        query: str,
+        documents: list[str],
+        top_k: int | None = None,
+    ) -> list[tuple[int, float]]:
+        """Rerank documents using cross-encoder model.
+
+        Args:
+            query: Search query
+            documents: List of documents to rerank
+            top_k: Return only top-k results (None = all)
+
+        Returns:
+            List of (original_index, score) tuples, sorted by score descending
+
+        Raises:
+            EmbeddingError: If reranking fails
+
+        Example:
+            >>> service = EmbeddingService()
+            >>> docs = ["AI agents", "Machine learning", "Deep learning"]
+            >>> results = await service.rerank("artificial intelligence", docs)
+            >>> # Returns [(0, 0.95), (1, 0.87), (2, 0.72)]
+        """
+        if not query or not query.strip():
+            raise EmbeddingError("Query cannot be empty")
+
+        if not documents:
+            raise EmbeddingError("Documents list cannot be empty")
+
+        try:
+            # Create query-document pairs
+            pairs = [[query, doc] for doc in documents]
+
+            # Run reranking in thread pool
+            scores: np.ndarray = await asyncio.to_thread(
+                self.reranker.predict,
+                pairs,
+                show_progress_bar=False,
+                convert_to_numpy=True,
+            )
+
+            # Normalize scores to [0, 1] using sigmoid
+            # Cross-encoder scores are typically unbounded, so we apply sigmoid
+            normalized_scores = 1 / (1 + np.exp(-scores))
+
+            # Create list of (index, score) tuples
+            results = [(i, float(score)) for i, score in enumerate(normalized_scores)]
+
+            # Sort by score descending
+            results.sort(key=lambda x: x[1], reverse=True)
+
+            # Return top-k if specified
+            if top_k is not None:
+                results = results[:top_k]
+
+            return results
+
+        except Exception as e:
+            raise EmbeddingError(f"Failed to rerank documents: {e}") from e
 
     def cosine_similarity(self, vec1: list[float], vec2: list[float]) -> float:
         """Calculate cosine similarity between two vectors.

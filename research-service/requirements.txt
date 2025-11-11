@@ -20,6 +20,8 @@ alembic==1.14.0
 # Crawling & Document Processing
 crawl4ai==0.7.6  # Latest version compatible with Python 3.13
 docling==2.18.0  # Latest version compatible with Python 3.13
+pypdf2==3.0.1  # Fallback PDF extraction
+pdfplumber==0.11.4  # Alternative PDF extraction with better table support
 beautifulsoup4==4.12.3
 trafilatura==1.12.2
 # playwright will be installed by crawl4ai (requires >=1.49.0)

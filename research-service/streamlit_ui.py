@@ -33,10 +33,55 @@ def main():
         st.header("⚙️ Settings")
         mode = st.radio("Mode", ["Search", "Research"], index=0)
 
-        st.subheader("Parameters")
+        st.subheader("Query Optimization")
+        search_mode = st.radio(
+            "Search Mode",
+            options=["⚡ SPEED", "⚖️ BALANCED", "🔍 DEEP"],
+            index=1,  # Default to BALANCED
+            help="Choose the search mode based on your needs",
+        )
+        
+        # Extract mode string (speed, balanced, deep)
+        mode_map = {
+            "⚡ SPEED": "speed",
+            "⚖️ BALANCED": "balanced",
+            "🔍 DEEP": "deep",
+        }
+        selected_mode = mode_map[search_mode]
+        
+        # Display mode info
+        mode_info = {
+            "speed": {
+                "sources": "5 sources",
+                "timeout": "15 seconds",
+                "features": "Snippets only, no crawling",
+                "use_case": "Quick lookups",
+            },
+            "balanced": {
+                "sources": "10 sources",
+                "timeout": "45 seconds",
+                "features": "Selective crawling (5 URLs), reranking enabled",
+                "use_case": "Default for most queries",
+            },
+            "deep": {
+                "sources": "20 sources",
+                "timeout": "60 seconds",
+                "features": "Full crawling, reranking, RAG with history",
+                "use_case": "Comprehensive research",
+            },
+        }
+        
+        info = mode_info[selected_mode]
+        st.info(
+            f"**{info['sources']}** | **{info['timeout']}**\n\n"
+            f"✨ {info['features']}\n\n"
+            f"💡 Best for: {info['use_case']}"
+        )
+
+        st.subheader("Advanced Parameters")
         if mode == "Search":
-            max_sources = st.slider("Max Sources", 5, 50, 20)
-            timeout = st.slider("Timeout (s)", 10, 300, 60)
+            max_sources = st.slider("Max Sources (override)", 5, 50, 20, help="Leave default to use mode setting")
+            timeout = st.slider("Timeout (s, override)", 10, 300, 60, help="Leave default to use mode setting")
         else:
             max_iterations = st.slider("Max Iterations", 1, 5, 3)
             timeout = st.slider("Timeout (s)", 60, 600, 300)
@@ -49,12 +94,12 @@ def main():
 
     # Main content
     if mode == "Search":
-        render_search_mode(max_sources, timeout, model)
+        render_search_mode(max_sources, timeout, model, selected_mode)
     else:
-        render_research_mode(max_iterations, timeout, model)
+        render_research_mode(max_iterations, timeout, model, selected_mode)
 
 
-def render_search_mode(max_sources: int, timeout: int, model: str):
+def render_search_mode(max_sources: int, timeout: int, model: str, mode: str):
     """Render search interface."""
     st.header("🔎 Fast Search")
     st.write("Quick web search with multi-source aggregation")
@@ -76,14 +121,21 @@ def render_search_mode(max_sources: int, timeout: int, model: str):
     if search_btn and query:
         with st.spinner("Searching..."):
             try:
+                # Build request payload - mode will override max_sources/timeout if not explicitly set
+                payload = {
+                    "query": query,
+                    "mode": mode,
+                    "model": model,
+                }
+                # Only include overrides if user changed them from defaults
+                if max_sources != 20:  # 20 is the default slider value
+                    payload["max_sources"] = max_sources
+                if timeout != 60:  # 60 is the default slider value
+                    payload["timeout"] = timeout
+                
                 response = httpx.post(
                     f"{API_BASE_URL}/v1/search",
-                    json={
-                        "query": query,
-                        "max_sources": max_sources,
-                        "timeout": timeout,
-                        "model": model,
-                    },
+                    json=payload,
                     timeout=timeout + 10,
                 )
 
@@ -122,13 +174,17 @@ def render_search_result(data: dict):
     st.info(data.get("answer", "No answer available"))
 
     # Metadata
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
     with col1:
         st.metric("Execution Time", f"{data.get('execution_time', 0):.2f}s")
     with col2:
         st.metric("Confidence", f"{data.get('confidence', 0):.2%}")
     with col3:
         st.metric("Sources", len(data.get("sources", [])))
+    with col4:
+        mode_display = data.get("mode", "balanced").upper()
+        mode_emoji = {"SPEED": "⚡", "BALANCED": "⚖️", "DEEP": "🔍"}.get(mode_display, "⚖️")
+        st.metric("Mode", f"{mode_emoji} {mode_display}")
 
     # Sub-queries
     if data.get("sub_queries"):
@@ -159,7 +215,7 @@ def render_search_result(data: dict):
         )
 
 
-def render_research_mode(max_iterations: int, timeout: int, model: str):
+def render_research_mode(max_iterations: int, timeout: int, model: str, mode: str):
     """Render research interface."""
     st.header("🔬 Deep Research")
     st.write("Comprehensive research with iterative synthesis")
@@ -188,6 +244,7 @@ def render_research_mode(max_iterations: int, timeout: int, model: str):
                         "query": query,
                         "max_iterations": max_iterations,
                         "timeout": timeout,
+                        "mode": mode,
                         "model": model,
                     },
                     timeout=timeout + 10,
