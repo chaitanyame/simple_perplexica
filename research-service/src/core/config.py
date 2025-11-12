@@ -34,6 +34,17 @@ class Settings(BaseSettings):
     SEARXNG_BASE_URL: str = Field(
         default="http://localhost:8080", description="SearxNG instance URL"
     )
+    SEARXNG_DEFAULT_CATEGORIES: list[str] = Field(
+        default_factory=lambda: ["general", "news"],
+        description="Default SearxNG categories (comma separated when sent)",
+    )
+    SEARXNG_DEFAULT_ENGINES: list[str] = Field(
+        default_factory=lambda: ["google", "bing", "duckduckgo"],
+        description="Optional default engines (comma separated when sent)",
+    )
+    SEARXNG_SAFESEARCH: int = Field(
+        default=1, ge=0, le=2, description="SearxNG safesearch level: 0=off,1=moderate,2=strict"
+    )
     SERPER_API_KEY: str | None = Field(default=None, description="SerperDev API key (optional)")
 
     # Research Pipeline Settings

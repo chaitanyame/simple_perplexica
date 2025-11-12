@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # PostgreSQL with pgvector extension
   postgres:
@@ -60,8 +58,8 @@ services:
       LANGFUSE_HOST: ${LANGFUSE_HOST:-https://cloud.langfuse.com}
       
       # Search (reuse from main app if available)
-      # Try host.docker.internal first, fallback to SERPER if SearxNG unavailable
-      SEARXNG_BASE_URL: ${SEARXNG_BASE_URL:-http://host.docker.internal:8080}
+      # Connect to SearXNG container via Docker network
+      SEARXNG_BASE_URL: ${SEARXNG_BASE_URL:-http://searxng:8080}
       SERPER_API_KEY: ${SERPER_API_KEY:-}
       
       # LLM Model
@@ -83,9 +81,10 @@ services:
     volumes:
       - ./src:/app/src
       - ./tests:/app/tests
-    command: uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
+    command: uvicorn src.main:app --host 0.0.0.0 --port 8000
     networks:
       - research-network
+      - simple_perplexica_default  # Connect to main app's network for SearXNG access
 
   # Streamlit testing UI
   streamlit:
@@ -113,8 +112,7 @@ volumes:
 networks:
   research-network:
     driver: bridge
-  # Optional: Connect to main app's network to access SearxNG directly
-  # Uncomment the line below and set external network name if needed
-  # default:
-  #   external: true
-  #   name: simple_perplexica_default
+  # Connect to main app's network to access SearXNG directly
+  simple_perplexica_default:
+    external: true
+    name: simple_perplexica_default

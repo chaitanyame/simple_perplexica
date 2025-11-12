@@ -17,6 +17,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.agents.research_agent import ResearchAgent, ResearchAgentDeps
+from src.agents.search_agent import SearchAgent, SearchAgentDeps
 from src.api.v1.schemas import (
     CitationResponse,
     ResearchPlanResponse,
@@ -26,8 +27,12 @@ from src.api.v1.schemas import (
 from src.core.config import settings
 from src.database.models import ResearchSession
 from src.database.session import get_db
+from src.rag.vector_store_repository import VectorStoreRepository
+from src.services.crawl.crawl4ai_client import Crawl4AIClient
+from src.services.document.dockling_processor import DocklingProcessor
 from src.services.embedding.embedding_service import EmbeddingService
 from src.services.llm.langfuse_tracer import LangfuseTracer
+from src.services.search.searxng_client import SearxNGClient
 from src.services.llm.openrouter_client import OpenRouterClient
 
 if TYPE_CHECKING:
@@ -66,23 +71,60 @@ async def create_research_agent(
         host=settings.LANGFUSE_HOST,
     )
 
-    # Initialize embedding service
-    embedding_service = EmbeddingService()
-
     # Initialize SearxNG client
-    searxng_client = httpx.AsyncClient(
+    searxng_client = SearxNGClient(
         base_url=settings.SEARXNG_BASE_URL,
         timeout=timeout,
     )
 
-    # Create agent dependencies
+    # Initialize crawling client
+    crawl_client = Crawl4AIClient()
+
+    # Initialize document processor
+    document_processor = DocklingProcessor()
+
+    # Initialize embedding service
+    embedding_service = EmbeddingService(
+        model_name="all-MiniLM-L6-v2",
+        reranker_model_name=settings.RERANKER_MODEL,
+        device="cpu",
+    )
+
+    # Initialize vector store
+    vector_store = VectorStoreRepository(
+        db=db,
+        dimension=384,  # all-MiniLM-L6-v2 embedding dimension
+    )
+
+    # Create SearchAgent (used by ResearchAgent)
+    search_deps = SearchAgentDeps(
+        llm_client=llm_client,
+        tracer=tracer,
+        db=db,
+        searxng_client=searxng_client,
+        serperdev_api_key=settings.SERPER_API_KEY or "",
+        crawl_client=crawl_client,
+        document_processor=document_processor,
+        embedding_service=embedding_service,
+        max_sources=20,  # Research mode uses more sources
+        timeout=timeout,
+        min_sources=5,
+        min_confidence=0.4,
+        enable_crawling=True,
+        max_crawl_urls=5,
+        enable_reranking=settings.ENABLE_RERANKING,
+        rerank_weight=settings.RERANK_WEIGHT,
+    )
+    search_agent = SearchAgent(deps=search_deps)
+
+    # Create ResearchAgent dependencies
     deps = ResearchAgentDeps(
         llm_client=llm_client,
         tracer=tracer,
         db=db,
+        search_agent=search_agent,
+        vector_store=vector_store,
         embedding_service=embedding_service,
-        searxng_client=searxng_client,
-        serperdev_api_key=settings.SERPER_API_KEY or "",
         max_iterations=max_iterations,
         timeout=timeout,
     )

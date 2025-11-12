@@ -1,7 +1,6 @@
 """Pydantic AI agents package."""
 
 from src.agents.research_agent import (
-    Citation,
     ResearchAgent,
     ResearchAgentDeps,
     ResearchOutput,
@@ -15,6 +14,7 @@ from src.agents.search_agent import (
     SearchSource,
     SubQuery,
 )
+from src.models.citation import Citation
 
 __all__ = [
     # Search Agent

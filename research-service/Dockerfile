@@ -1,9 +1,16 @@
+# syntax=docker/dockerfile:1.7
 FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
+# Speed up pip and keep output lean
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_COLOR=1
+
+# Install system dependencies (minimal set)
+RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     g++ \
     libpq-dev \
@@ -13,25 +20,23 @@ RUN apt-get update && apt-get install -y \
 # Create non-root user early
 RUN useradd -m -u 1000 research
 
-# Install Python dependencies
+# Install Python dependencies first for better layer caching
 COPY requirements.txt .
-RUN pip install -r requirements.txt
+# Use BuildKit cache mount when available to accelerate pip installs
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --upgrade pip && \
+    pip install -r requirements.txt
 
-# Switch to research user for Playwright installation
+# Playwright installation (browsers and OS deps)
+# Install browsers as non-root (cache in user dir), and deps as root
 USER research
-
-# Install Playwright browsers for Crawl4AI (as research user)
 RUN playwright install chromium
-
-# Switch back to root to install system deps for chromium
 USER root
 RUN playwright install-deps chromium
 
-# Copy application code and set ownership
-COPY src/ ./src/
-COPY tests/ ./tests/
-COPY pyproject.toml .
-RUN chown -R research:research /app
+# Copy application code with correct ownership (avoid chown step)
+COPY --chown=research:research src/ ./src/
+COPY --chown=research:research pyproject.toml .
 
 # Switch to research user for runtime
 USER research

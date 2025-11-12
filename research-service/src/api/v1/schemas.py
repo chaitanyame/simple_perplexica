@@ -55,6 +55,19 @@ class SearchRequest(BaseModel):
         None,
         description="LLM model to use (e.g., 'anthropic/claude-3.5-sonnet')",
     )
+    # Enhanced reranking options (experimental)
+    enable_diversity: bool = Field(
+        False,
+        description="Enable diversity penalty to reduce duplicate results (experimental)",
+    )
+    enable_recency: bool = Field(
+        False,
+        description="Enable recency boost for temporal queries (experimental)",
+    )
+    enable_query_aware: bool = Field(
+        False,
+        description="Enable query-aware score adaptations (experimental)",
+    )
 
     @field_validator("query")
     @classmethod

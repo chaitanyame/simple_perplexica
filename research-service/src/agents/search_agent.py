@@ -18,22 +18,31 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from typing import Any
 
 import structlog
 
 logger = structlog.get_logger(__name__)
 
+import json
 import httpx
 from pydantic import BaseModel, Field
 from pydantic_ai import ModelRetry
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.search_modes import SearchMode, get_mode_from_string
+from src.core.config import settings
 from src.services.crawl.crawl4ai_client import Crawl4AIClient
 from src.services.document.dockling_processor import DocklingProcessor
 from src.services.embedding.embedding_service import EmbeddingService
+from src.services.embedding.semantic_reranker import (
+    RecencyConfig,
+    RerankingConfig,
+    SemanticReranker,
+)
 from src.services.llm.langfuse_tracer import LangfuseTracer
 from src.services.llm.openrouter_client import OpenRouterClient
+from src.services.search.searxng_client import SearxNGClient
 from src.utils.language_detector import detect_language, get_language_name
 from src.utils.query_normalizer import normalize_query
 from src.utils.temporal_validator import TemporalValidator
@@ -138,6 +147,42 @@ class SearchOutput(BaseModel):
 
 
 # =============================================================================
+# Utility Functions
+# =============================================================================
+
+
+def extract_json_from_markdown(content: str) -> str:
+    """Extract JSON from markdown code blocks.
+    
+    Some LLM models wrap JSON responses in ```json...``` or ```...``` blocks.
+    This function extracts the JSON content from such blocks.
+    
+    Args:
+        content: Raw LLM response text
+        
+    Returns:
+        Cleaned JSON string
+    """
+    if not content.startswith("```"):
+        return content
+        
+    lines = content.split("\n")
+    json_lines = []
+    in_code_block = False
+    
+    for line in lines:
+        if line.strip().startswith("```"):
+            in_code_block = not in_code_block
+            continue
+        if in_code_block:
+            json_lines.append(line)
+    
+    extracted = "\n".join(json_lines).strip()
+    logger.info(f"📝 Extracted JSON from markdown code block: {len(extracted)} chars")
+    return extracted
+
+
+# =============================================================================
 # Dependency Injection
 # =============================================================================
 
@@ -160,12 +205,17 @@ class SearchAgentDeps:
         max_crawl_urls: Maximum URLs to crawl for content (default: 5)
         enable_reranking: Whether to use semantic reranking (default: True)
         rerank_weight: Weight for semantic score in final ranking (default: 0.6)
+        enable_diversity_penalty: Enable diversity penalty to reduce duplicates (default: False)
+        enable_recency_boost: Enable recency boost for temporal queries (default: False)
+        enable_query_aware: Enable query-aware score adaptations (default: False)
+        reranking_config: Advanced reranking configuration (optional)
     """
 
     llm_client: OpenRouterClient
     tracer: LangfuseTracer
     db: AsyncSession
-    searxng_client: httpx.AsyncClient
+    # Accept either raw httpx.AsyncClient or SearxNGClient abstraction
+    searxng_client: Any
     serperdev_api_key: str
     crawl_client: Crawl4AIClient
     document_processor: DocklingProcessor
@@ -178,6 +228,11 @@ class SearchAgentDeps:
     max_crawl_urls: int = 5  # Maximum URLs to crawl
     enable_reranking: bool = True  # Enable semantic reranking
     rerank_weight: float = 0.6  # Weight for semantic score (0.0-1.0)
+    # Enhanced reranking configuration
+    enable_diversity_penalty: bool = False  # Enable diversity penalty (deduplication)
+    enable_recency_boost: bool = False  # Enable recency boost for temporal queries
+    enable_query_aware: bool = False  # Enable query-aware score adaptations
+    reranking_config: RerankingConfig | None = None  # Advanced reranking config
 
 
 # =============================================================================
@@ -219,10 +274,11 @@ class SearchAgent:
         self.temporal_validator = TemporalValidator()
 
         # Log search configuration
+        # SearxNG is now the primary search backend; SerperDev acts as a fallback when available
         if deps.serperdev_api_key and deps.serperdev_api_key.strip():
-            logger.info(f"SearchAgent initialized with SerperDev (primary) + SearxNG (fallback)")
+            logger.info("SearchAgent initialized with SearxNG (primary) + SerperDev (fallback)")
         else:
-            logger.info(f"SearchAgent initialized with SearxNG only (no SerperDev key)")
+            logger.info("SearchAgent initialized with SearxNG (primary, no SerperDev key available)")
         
         logger.info(f"✅ Temporal validation enabled with post-retrieval filtering")
 
@@ -364,11 +420,12 @@ Respond with valid JSON only."""
             original_model = self.deps.llm_client.model
             self.deps.llm_client.model = "meta-llama/llama-4-maverick:free"  # FREE tier
             
+            # Meta models don't support response_format parameter
+            # We rely on the prompt instructing JSON output instead
             response = await self.deps.llm_client.chat(
                 messages=messages,
                 temperature=0.3,
                 max_tokens=500,
-                response_format={"type": "json_object"},  # Force JSON output
             )
             
             # Restore original model
@@ -379,6 +436,9 @@ Respond with valid JSON only."""
             logger.info(f"� LLM RESPONSE received")
             logger.info(f"📥 Response length: {len(content)} chars")
             logger.info(f"📥 Raw response:\n{content}")
+            
+            # Extract JSON from markdown code blocks if present
+            content = extract_json_from_markdown(content)
             
             # Parse JSON response
             data = json.loads(content)
@@ -493,150 +553,226 @@ Respond with valid JSON only."""
         return results
 
     async def _search_source(self, sub_query: SubQuery) -> list[SearchSource]:
-        """Search using SerperDev (primary) or SearxNG (fallback).
+        """Search using SearxNG (primary) with fallback to SerperDev.
 
-        Args:
-            sub_query: Sub-query to search
-
-        Returns:
-            List of SearchSource objects from this source
+        Order:
+            1. Attempt SearxNG (preferred per spec)
+            2. If SearxNG fails or returns no usable results, try SerperDev (if key)
         """
-        # Try SerperDev first if API key is available
-        if self.deps.serperdev_api_key and self.deps.serperdev_api_key.strip():
-            temporal_info = f"temporal: {sub_query.temporal_scope}"
-            if sub_query.specific_year:
-                temporal_info += f", year: {sub_query.specific_year}"
-            
-            # ============ CRITICAL LOG: SEARCH API INPUT ============
-            logger.info(f"🔍 SEARCH API CALL: SerperDev")
-            logger.info(f"📤 Query: '{sub_query.query}'")
-            logger.info(f"📤 Language: {sub_query.language}")
-            logger.info(f"📤 Temporal: {temporal_info}")
-            
-            try:
-                # Build SerperDev request with temporal filtering and language
-                search_params = {
-                    "q": sub_query.query,
-                    "num": 10,
-                    "gl": sub_query.language,  # Language/region parameter
-                }
-                
-                # Priority 1: Specific year mentioned (e.g., "2022", "2023")
-                if sub_query.specific_year:
-                    # Use Google's custom date range: cd_min (start date) and cd_max (end date)
-                    # Format: cdr:1,cd_min:MM/DD/YYYY,cd_max:MM/DD/YYYY
-                    year = sub_query.specific_year
-                    # Search entire year: Jan 1 to Dec 31
-                    search_params["tbs"] = f"cdr:1,cd_min:1/1/{year},cd_max:12/31/{year}"
-                    logger.info(f"  📅 Filtering: Specific year {year} (Jan 1 - Dec 31)")
-                
-                # Priority 2: Relative time filters (past week/month/year/recent)
-                elif sub_query.temporal_scope == "past_week":
-                    search_params["tbs"] = "qdr:w"
-                    logger.info(f"  📅 Filtering: Past week")
-                elif sub_query.temporal_scope == "past_month" or sub_query.temporal_scope == "recent":
-                    search_params["tbs"] = "qdr:m"
-                    logger.info(f"  📅 Filtering: Past month (recent)")
-                elif sub_query.temporal_scope == "past_year":
-                    search_params["tbs"] = "qdr:y"
-                    logger.info(f"  📅 Filtering: Past year")
-                else:
-                    logger.info(f"  📅 No time filter (any)")
-                
-                logger.info(f"📤 Search params: {search_params}")
-                
-                async with httpx.AsyncClient() as client:
-                    response = await client.post(
-                        "https://google.serper.dev/search",
-                        headers={
-                            "X-API-KEY": self.deps.serperdev_api_key,
-                            "Content-Type": "application/json",
-                        },
-                        json=search_params,
-                        timeout=self.timeout,
-                    )
-
-                    # ============ CRITICAL LOG: SEARCH API RESPONSE ============
-                    logger.info(f"📥 SEARCH API RESPONSE")
-                    logger.info(f"📥 Status: {response.status_code}")
-
-                    if response.status_code == 200:
-                        data = response.json()
-                        organic = data.get("organic", [])
-
-                        logger.info(f"📥 Results count: {len(organic)}")
-                        logger.info(f"✅ SerperDev SUCCESS for: {sub_query.query}")
-                        
-                        # Log sample results
-                        for i, r in enumerate(organic[:3], 1):
-                            logger.info(
-                                f"  [{i}] {r.get('title', 'No title')[:60]}... | "
-                                f"URL: {r.get('link', 'No URL')[:80]}"
-                            )
-
-                        if len(organic) > 0:
-                            sources = [
-                                SearchSource(
-                                    title=r.get("title", ""),
-                                    url=r.get("link", ""),
-                                    snippet=r.get("snippet", ""),
-                                    relevance=0.8,  # SerperDev has good quality
-                                    source_type="web",
-                                )
-                                for r in organic
-                            ]
-                            logger.info(f"📦 Returning {len(sources)} SearchSource objects")
-                            return sources
-                        else:
-                            logger.warning("SerperDev returned 0 results, trying SearxNG fallback")
-                    else:
-                        logger.warning(f"SerperDev returned status {response.status_code}, response: {response.text[:200]}")
-
-            except httpx.HTTPStatusError as e:
-                import traceback
-                logger.error(f"❌ SerperDev HTTP error: {e.response.status_code}")
-                logger.error(f"SerperDev error details: {traceback.format_exc()}")
-            except Exception as e:
-                import traceback
-                logger.error(f"❌ SerperDev exception: {e}. Falling back to SearxNG")
-                logger.error(f"SerperDev error details: {traceback.format_exc()}")
-
-        # Fallback to SearxNG
-        logger.info(f"🔍 Trying SearxNG fallback for query: {sub_query.query}")
+        # -----------------------------
+        # Primary: SearxNG
+        # -----------------------------
+        logger.info("🌐 SearxNG primary search", query=sub_query.query)
         try:
-            response = await self.deps.searxng_client.get(
-                "/search",
-                params={"q": sub_query.query, "format": "json"},
-                timeout=self.timeout,
-            )
+            # Support both wrapper client and raw httpx.AsyncClient
+            if isinstance(self.deps.searxng_client, SearxNGClient):
+                # Map temporal_scope to SearxNG time_range when possible
+                time_range_map = {
+                    "past_week": "week",
+                    "past_month": "month",
+                    "recent": "month",
+                    "past_year": "year",
+                }
+                time_range = None
+                if sub_query.specific_year is not None:
+                    # SearxNG does not have direct year filter; leave None (handled downstream)
+                    time_range = None
+                else:
+                    time_range = time_range_map.get(sub_query.temporal_scope)
+                # First attempt
+                categories = getattr(settings, "SEARXNG_DEFAULT_CATEGORIES", ["general"])
+                engines = getattr(settings, "SEARXNG_DEFAULT_ENGINES", []) or None
+                searx_results = await self.deps.searxng_client.search(
+                    sub_query.query,
+                    limit=10,
+                    categories=categories,
+                    engines=engines,
+                    language=sub_query.language,
+                    time_range=time_range,
+                    safesearch=getattr(settings, "SEARXNG_SAFESEARCH", 1),
+                )
+                if searx_results:
+                    logger.info("✅ SearxNG success (primary attempt)", count=len(searx_results))
+                    return [
+                        SearchSource(
+                            title=r.get("title", ""),
+                            url=r.get("url", ""),
+                            snippet=r.get("content", ""),
+                            relevance=0.7,
+                            source_type="web",
+                        )
+                        for r in searx_results
+                    ]
+                logger.warning("SearxNG returned 0 results (primary); evaluating retry conditions")
 
-            logger.info(f"SearxNG response status: {response.status_code}")
+                # Year heuristic attempt: if a specific year exists, try broad 'year' range
+                if sub_query.specific_year is not None:
+                    logger.info("🔁 SearxNG retry (year heuristic)", year=sub_query.specific_year)
+                    searx_year_results = await self.deps.searxng_client.search(
+                        sub_query.query,
+                        limit=10,
+                        categories=categories,
+                        engines=engines,
+                        language=sub_query.language,
+                        time_range="year",
+                        safesearch=getattr(settings, "SEARXNG_SAFESEARCH", 1),
+                    )
+                    if searx_year_results:
+                        logger.info("✅ SearxNG success (year heuristic)", count=len(searx_year_results))
+                        return [
+                            SearchSource(
+                                title=r.get("title", ""),
+                                url=r.get("url", ""),
+                                snippet=r.get("content", ""),
+                                relevance=0.7,
+                                source_type="web",
+                            )
+                            for r in searx_year_results
+                        ]
+                    else:
+                        logger.warning("SearxNG year heuristic yielded 0 results")
 
+                # Expanded retry: drop language restriction & add broader categories if missing
+                expanded_categories = sorted(set(list(categories) + ["general", "news"]))
+                logger.info("🔁 SearxNG retry (expanded scope)", categories=expanded_categories)
+                searx_retry_results = await self.deps.searxng_client.search(
+                    sub_query.query,
+                    limit=10,
+                    categories=expanded_categories,
+                    engines=engines,
+                    language=None,  # remove language filter to broaden
+                    time_range=None,
+                    safesearch=getattr(settings, "SEARXNG_SAFESEARCH", 1),
+                )
+                if searx_retry_results:
+                    logger.info("✅ SearxNG success (expanded retry)", count=len(searx_retry_results))
+                    return [
+                        SearchSource(
+                            title=r.get("title", ""),
+                            url=r.get("url", ""),
+                            snippet=r.get("content", ""),
+                            relevance=0.65,  # Slightly lower relevance due to broadened scope
+                            source_type="web",
+                        )
+                        for r in searx_retry_results
+                    ]
+                else:
+                    logger.warning("SearxNG expanded retry returned 0 results; proceeding to fallback")
+            else:  # Raw httpx client path
+                # Raw client path - build params manually
+                params = {
+                    "q": sub_query.query,
+                    "format": "json",
+                    "language": sub_query.language,
+                }
+                # Temporal mapping as above
+                time_range_map = {
+                    "past_week": "week",
+                    "past_month": "month",
+                    "recent": "month",
+                    "past_year": "year",
+                }
+                if sub_query.specific_year is None:
+                    tr = time_range_map.get(sub_query.temporal_scope)
+                    if tr:
+                        params["time_range"] = tr
+                cats = getattr(settings, "SEARXNG_DEFAULT_CATEGORIES", ["general"])
+                if cats:
+                    params["categories"] = ",".join(cats)
+                engines = getattr(settings, "SEARXNG_DEFAULT_ENGINES", [])
+                if engines:
+                    params["engines"] = ",".join(engines)
+                params["safesearch"] = getattr(settings, "SEARXNG_SAFESEARCH", 1)
+
+                response = await self.deps.searxng_client.get("/search", params=params, timeout=self.timeout)
+                logger.info("SearxNG response status", status=response.status_code)
+                if response.status_code == 200:
+                    data = response.json()
+                    results = data.get("results", [])
+                    if results:
+                        logger.info("✅ SearxNG success", count=len(results))
+                        return [
+                            SearchSource(
+                                title=r.get("title", ""),
+                                url=r.get("url", ""),
+                                snippet=r.get("content", ""),
+                                relevance=0.7,
+                                source_type="web",
+                            )
+                            for r in results
+                        ]
+                    else:
+                        logger.warning("SearxNG returned 0 results; will consider fallback")
+                else:
+                    logger.warning("SearxNG non-200", status=response.status_code)
+        except httpx.TimeoutException:
+            logger.warning("SearxNG timeout", query=sub_query.query)
+        except httpx.ConnectError as e:
+            logger.error("SearxNG connect error", error=str(e))
+        except Exception as e:
+            logger.error("SearxNG unexpected error", error=str(e))
+
+        # -----------------------------
+        # Fallback: SerperDev
+        # -----------------------------
+        if not (self.deps.serperdev_api_key and self.deps.serperdev_api_key.strip()):
+            logger.warning("No SerperDev API key available; returning empty results")
+            return []
+
+        temporal_info = f"temporal: {sub_query.temporal_scope}"
+        if sub_query.specific_year:
+            temporal_info += f", year: {sub_query.specific_year}"
+        logger.info("↩️ Fallback to SerperDev", query=sub_query.query, temporal=temporal_info)
+
+        try:
+            search_params = {
+                "q": sub_query.query,
+                "num": 10,
+                "gl": sub_query.language,
+            }
+            if sub_query.specific_year:
+                year = sub_query.specific_year
+                search_params["tbs"] = f"cdr:1,cd_min:1/1/{year},cd_max:12/31/{year}"
+            elif sub_query.temporal_scope == "past_week":
+                search_params["tbs"] = "qdr:w"
+            elif sub_query.temporal_scope in {"past_month", "recent"}:
+                search_params["tbs"] = "qdr:m"
+            elif sub_query.temporal_scope == "past_year":
+                search_params["tbs"] = "qdr:y"
+
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    "https://google.serper.dev/search",
+                    headers={
+                        "X-API-KEY": self.deps.serperdev_api_key,
+                        "Content-Type": "application/json",
+                    },
+                    json=search_params,
+                    timeout=self.timeout,
+                )
+
+            logger.info("SerperDev response status", status=response.status_code)
             if response.status_code == 200:
                 data = response.json()
-                results = data.get("results", [])
-
-                logger.info(f"✅ SearxNG returned {len(results)} results for: {sub_query.query}")
-
-                return [
-                    SearchSource(
-                        title=r.get("title", ""),
-                        url=r.get("url", ""),
-                        snippet=r.get("content", ""),
-                        relevance=0.7,
-                        source_type="web",
-                    )
-                    for r in results
-                ]
+                organic = data.get("organic", [])
+                if organic:
+                    logger.info("✅ SerperDev success", count=len(organic))
+                    return [
+                        SearchSource(
+                            title=r.get("title", ""),
+                            url=r.get("link", ""),
+                            snippet=r.get("snippet", ""),
+                            relevance=0.8,
+                            source_type="web",
+                        )
+                        for r in organic
+                    ]
+                else:
+                    logger.warning("SerperDev returned 0 results")
             else:
-                logger.warning(f"SearxNG returned status {response.status_code}")
-
-        except httpx.ConnectError as e:
-            logger.error(f"Cannot connect to SearxNG: {e}")
-        except httpx.TimeoutException:
-            logger.warning(f"SearxNG timeout for query: {sub_query.query}")
+                logger.warning("SerperDev non-200", status=response.status_code)
         except Exception as e:
-            logger.error(f"SearxNG error: {e}")
+            logger.error("SerperDev error", error=str(e))
 
         return []
 
@@ -805,6 +941,9 @@ Respond with valid JSON only."""
                     "Applying semantic reranking",
                     query=original_query,
                     num_candidates=len(filtered),
+                    diversity_enabled=self.deps.enable_diversity_penalty,
+                    recency_enabled=self.deps.enable_recency_boost,
+                    query_aware_enabled=self.deps.enable_query_aware,
                 )
 
                 # Prepare documents for reranking (use content if available, else snippet)
@@ -813,11 +952,75 @@ Respond with valid JSON only."""
                     for s in filtered
                 ]
 
-                # Get semantic scores from cross-encoder
-                rerank_results = await self.deps.embedding_service.rerank(
-                    query=original_query,
-                    documents=documents,
+                # Check if enhanced reranking is enabled
+                use_enhanced = (
+                    self.deps.enable_diversity_penalty
+                    or self.deps.enable_recency_boost
+                    or self.deps.enable_query_aware
                 )
+
+                if use_enhanced:
+                    # Use enhanced semantic reranking
+                    # Build reranking config
+                    config = self.deps.reranking_config or RerankingConfig(
+                        diversity_penalty=0.3 if self.deps.enable_diversity_penalty else 0.0,
+                        query_aware=self.deps.enable_query_aware,
+                        recency_config=RecencyConfig(
+                            enabled=self.deps.enable_recency_boost,
+                            weight=0.3,
+                            adaptive=True,
+                        ),
+                    )
+                    
+                    reranker = SemanticReranker(
+                        embedding_service=self.deps.embedding_service,
+                        config=config,
+                    )
+                    
+                    # Apply enhanced reranking based on enabled features
+                    if self.deps.enable_diversity_penalty and not self.deps.enable_recency_boost:
+                        rerank_results = await reranker.rerank_with_diversity(
+                            query=original_query,
+                            documents=documents,
+                        )
+                    elif self.deps.enable_recency_boost and not self.deps.enable_diversity_penalty:
+                        # Need DocumentWithMetadata for recency
+                        from src.services.embedding.semantic_reranker import DocumentWithMetadata
+                        docs_with_meta = [
+                            DocumentWithMetadata(
+                                content=doc,
+                                published_at=filtered[i].published_at if hasattr(filtered[i], 'published_at') else None,
+                            )
+                            for i, doc in enumerate(documents)
+                        ]
+                        rerank_results = await reranker.rerank_with_recency(
+                            query=original_query,
+                            documents=docs_with_meta,
+                        )
+                    elif self.deps.enable_query_aware:
+                        rerank_results = await reranker.rerank_with_query_awareness(
+                            query=original_query,
+                            documents=documents,
+                        )
+                    else:
+                        # Multiple features enabled - use query awareness as primary
+                        rerank_results = await reranker.rerank_with_query_awareness(
+                            query=original_query,
+                            documents=documents,
+                        )
+                    
+                    logger.info(
+                        "Enhanced semantic reranking applied",
+                        method="diversity" if self.deps.enable_diversity_penalty else (
+                            "recency" if self.deps.enable_recency_boost else "query_aware"
+                        ),
+                    )
+                else:
+                    # Use standard cross-encoder reranking
+                    rerank_results = await self.deps.embedding_service.rerank(
+                        query=original_query,
+                        documents=documents,
+                    )
 
                 # Map semantic scores back to sources
                 for idx, score in rerank_results:

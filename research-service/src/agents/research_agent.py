@@ -18,9 +18,12 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.search_modes import SearchMode, get_mode_from_string
+from ..models.citation import Citation
 from ..rag.vector_store_repository import VectorStoreRepository
+from ..services.embedding.embedding_service import EmbeddingService
 from ..services.llm.langfuse_tracer import LangfuseTracer
 from ..services.llm.openrouter_client import OpenRouterClient
+from ..utils.claim_grounder import ClaimGrounder, GroundingResult
 from .search_agent import SearchAgent, SearchSource
 
 logger = structlog.get_logger(__name__)
@@ -47,16 +50,6 @@ class ResearchPlan(BaseModel):
     complexity: str = Field(..., description="Plan complexity: simple, medium, complex")
 
 
-class Citation(BaseModel):
-    """Citation from research source."""
-
-    source_id: str = Field(..., description="Unique source identifier")
-    title: str = Field(..., description="Source title")
-    url: str = Field(..., description="Source URL")
-    excerpt: str = Field(..., description="Relevant excerpt from source")
-    relevance: float = Field(..., description="Relevance score (0.0-1.0)")
-
-
 class ResearchOutput(BaseModel):
     """Complete research output with findings and citations."""
 
@@ -65,6 +58,9 @@ class ResearchOutput(BaseModel):
     citations: list[Citation] = Field(..., description="Supporting citations")
     confidence: float = Field(..., description="Overall confidence score (0.0-1.0)")
     execution_steps: int = Field(..., description="Number of steps executed")
+    grounding_result: GroundingResult | None = Field(
+        None, description="Citation grounding analysis (if enabled)"
+    )
 
 
 @dataclass
@@ -76,6 +72,7 @@ class ResearchAgentDeps:
     db: AsyncSession
     search_agent: SearchAgent
     vector_store: VectorStoreRepository
+    embedding_service: EmbeddingService
     max_iterations: int = 5
     timeout: float = 300.0
 
@@ -139,17 +136,31 @@ Return JSON with:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            model="anthropic/claude-3.5-sonnet",
             temperature=0.1,
         )
 
-        # Extract plan data
-        if hasattr(response, "get"):
-            steps_data = response.get("steps", [])
-            estimated_time = response.get("estimated_time", 60.0)
-            complexity = response.get("complexity", "medium")
+        # Extract plan data - response has "content" key with JSON string
+        import structlog
+        import json
+        logger = structlog.get_logger(__name__)
+        
+        if isinstance(response, dict) and "content" in response:
+            content_str = str(response["content"])
+            logger.debug("LLM response content", content_preview=content_str[:200])
+            try:
+                # Parse JSON from content string
+                plan_data = json.loads(content_str)
+                steps_data = plan_data.get("steps", [])
+                estimated_time = plan_data.get("estimated_time", 60.0)
+                complexity = plan_data.get("complexity", "medium")
+            except json.JSONDecodeError:
+                logger.error("Failed to parse plan JSON", content=content_str[:500])
+                steps_data = []
+                estimated_time = 60.0
+                complexity = "medium"
         else:
-            # Fallback for non-dict response
+            # Fallback for unexpected response format
+            logger.warning("Unexpected response format", response_type=type(response).__name__)
             steps_data = []
             estimated_time = 60.0
             complexity = "medium"
@@ -193,11 +204,17 @@ Return JSON with:
         try:
             result = await self.search_agent.run(query, mode=mode)
             return result.sources
-        except TimeoutError:
+        except TimeoutError as e:
             # Handle timeout gracefully
+            import structlog
+            logger = structlog.get_logger(__name__)
+            logger.warning("Search timeout during evidence gathering", query=query, error=str(e))
             return []
-        except Exception:
+        except Exception as e:
             # Handle other search errors
+            import structlog
+            logger = structlog.get_logger(__name__)
+            logger.error("Search failed during evidence gathering", query=query, error=str(e), error_type=type(e).__name__)
             return []
 
     async def store_sources_to_vector_db(
@@ -343,15 +360,23 @@ Return JSON with:
 
         return citations
 
-    async def synthesize_findings(self, citations: list[Citation], query: str) -> str:
-        """Synthesize findings from multiple citations.
+    async def synthesize_findings(
+        self, 
+        citations: list[Citation], 
+        query: str,
+        enable_grounding: bool = True,
+    ) -> tuple[str, GroundingResult | None]:
+        """Synthesize findings from multiple citations with optional grounding verification.
 
         Args:
             citations: List of citations to synthesize
             query: Original research query
+            enable_grounding: Whether to verify claims against sources (default: True)
 
         Returns:
-            Synthesized findings text (minimum 500 characters)
+            Tuple of (synthesis_text, grounding_result)
+            - synthesis_text: Synthesized findings (minimum 500 characters)
+            - grounding_result: Grounding analysis if enabled, None otherwise
 
         Raises:
             ValueError: If synthesis fails
@@ -415,7 +440,6 @@ Write detailed synthesis with descriptions for every item:"""
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            model="anthropic/claude-3.5-sonnet",
             temperature=0.3,
             max_tokens=2048,  # Allow longer, more detailed responses
         )
@@ -437,14 +461,67 @@ Write detailed synthesis with descriptions for every item:"""
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": retry_prompt},
                 ],
-                model="anthropic/claude-3.5-sonnet",
                 temperature=0.3,
                 max_tokens=2048,
             )
             if isinstance(response, dict) and "content" in response:
                 synthesis = str(response["content"])
 
-        return synthesis
+        # NEW: Ground the synthesis against citations
+        grounding_result = None
+        if enable_grounding and citations:
+            try:
+                grounder = ClaimGrounder(
+                    embedding_service=self.deps.embedding_service,
+                    grounding_threshold=0.6,  # Claims need 60% confidence to be grounded
+                    similarity_threshold=0.7,  # Sources need 70% similarity to match
+                )
+                
+                grounding_result = await grounder.ground_synthesis(synthesis, citations)
+                
+                # Log grounding metrics
+                logger.info(
+                    "Citation grounding complete",
+                    overall_grounding=f"{grounding_result.overall_grounding:.2f}",
+                    total_claims=len(grounding_result.claims),
+                    grounded_claims=sum(1 for c in grounding_result.claims if c.is_grounded),
+                    unsupported_claims=len(grounding_result.unsupported_claims),
+                    hallucination_count=grounding_result.hallucination_count,
+                )
+                
+                # Warn if high hallucination rate
+                if grounding_result.hallucination_count > 0:
+                    hallucination_rate = grounding_result.hallucination_count / len(grounding_result.claims)
+                    if hallucination_rate > 0.2:  # More than 20% hallucinations
+                        logger.warning(
+                            "⚠️ High hallucination rate detected",
+                            rate=f"{hallucination_rate:.1%}",
+                            count=grounding_result.hallucination_count,
+                            unsupported_claims=[c.text[:100] for c in grounding_result.unsupported_claims[:3]],
+                        )
+                
+                # Log to Langfuse if available
+                if self.tracer:
+                    try:
+                        self.tracer.log_event(
+                            name="citation_grounding",
+                            metadata={
+                                "overall_grounding": grounding_result.overall_grounding,
+                                "total_claims": len(grounding_result.claims),
+                                "grounded_claims": sum(1 for c in grounding_result.claims if c.is_grounded),
+                                "hallucination_count": grounding_result.hallucination_count,
+                                "grounding_threshold": 0.6,
+                            },
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to log grounding to Langfuse: {e}")
+                
+            except Exception as e:
+                logger.error(f"Citation grounding failed: {e}", exc_info=True)
+                # Don't fail the entire synthesis if grounding fails
+                grounding_result = None
+
+        return synthesis, grounding_result
 
     async def identify_gaps(self, findings: str, query: str) -> dict[str, Any]:
         """Identify gaps in research findings for iterative refinement.
@@ -480,7 +557,6 @@ Identify gaps:"""
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            model="anthropic/claude-3.5-sonnet",
             temperature=0.1,
         )
 
@@ -561,20 +637,26 @@ Identify gaps:"""
         )
 
         # Step 1: Generate plan
+        logger.info("📝 Generating research plan")
         plan = await self.generate_plan(query)
+        logger.info(f"✅ Plan generated with {len(plan.steps)} steps", steps=[s.search_query for s in plan.steps])
 
         # Step 2: Execute plan steps with mode
         all_sources: list[SearchSource] = []
-        for step in plan.steps:
+        for idx, step in enumerate(plan.steps, 1):
+            logger.info(f"🔍 Step {idx}/{len(plan.steps)}: Gathering evidence", query=step.search_query)
             # Pass mode to SearchAgent via gather_evidence
             sources = await self.gather_evidence(step.search_query, mode=search_mode)
+            logger.info(f"✅ Step {idx} complete: {len(sources)} sources found")
             all_sources.extend(sources)
 
         # Step 3: Extract citations (with deduplication)
         citations = await self.extract_citations(all_sources, query)
 
-        # Step 4: Synthesize findings
-        findings = await self.synthesize_findings(citations, query)
+        # Step 4: Synthesize findings with grounding
+        findings, grounding_result = await self.synthesize_findings(
+            citations, query, enable_grounding=True
+        )
 
         # Step 5: Build output
         output = ResearchOutput(
@@ -583,6 +665,7 @@ Identify gaps:"""
             citations=citations,
             confidence=min(sum(c.relevance for c in citations) / max(len(citations), 1), 1.0),
             execution_steps=len(plan.steps),
+            grounding_result=grounding_result,
         )
 
         # Step 6: Validate
@@ -710,8 +793,10 @@ Identify gaps:"""
         # Step 6: Extract citations (with deduplication)
         citations = await self.extract_citations(combined_sources, query)
 
-        # Step 7: Synthesize findings from both new and retrieved sources
-        findings = await self.synthesize_findings(citations, query)
+        # Step 7: Synthesize findings from both new and retrieved sources with grounding
+        findings, grounding_result = await self.synthesize_findings(
+            citations, query, enable_grounding=True
+        )
 
         # Step 8: Build output
         output = ResearchOutput(
@@ -720,6 +805,7 @@ Identify gaps:"""
             citations=citations,
             confidence=min(sum(c.relevance for c in citations) / max(len(citations), 1), 1.0),
             execution_steps=len(plan.steps),
+            grounding_result=grounding_result,
         )
 
         # Step 9: Validate

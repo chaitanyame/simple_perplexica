@@ -30,6 +30,7 @@ from src.services.crawl.crawl4ai_client import Crawl4AIClient
 from src.services.document.dockling_processor import DocklingProcessor
 from src.services.embedding.embedding_service import EmbeddingService
 from src.services.llm.langfuse_tracer import LangfuseTracer
+from src.services.search.searxng_client import SearxNGClient
 from src.services.llm.openrouter_client import OpenRouterClient
 
 if TYPE_CHECKING:
@@ -45,6 +46,9 @@ async def create_search_agent(
     timeout: float = 60.0,
     min_sources: int = 5,
     min_confidence: float = 0.5,
+    enable_diversity: bool = False,
+    enable_recency: bool = False,
+    enable_query_aware: bool = False,
 ) -> SearchAgent:
     """Create SearchAgent with dependencies.
 
@@ -55,6 +59,9 @@ async def create_search_agent(
         timeout: Search timeout in seconds
         min_sources: Minimum required sources for valid output
         min_confidence: Minimum confidence threshold
+        enable_diversity: Enable diversity penalty for deduplication
+        enable_recency: Enable recency boost for temporal queries
+        enable_query_aware: Enable query-aware score adaptations
 
     Returns:
         Configured SearchAgent instance
@@ -72,8 +79,8 @@ async def create_search_agent(
         host=settings.LANGFUSE_HOST,
     )
 
-    # Initialize SearxNG client
-    searxng_client = httpx.AsyncClient(
+    # Initialize SearxNG client (wrapper)
+    searxng_client = SearxNGClient(
         base_url=settings.SEARXNG_BASE_URL,
         timeout=timeout,
     )
@@ -119,6 +126,10 @@ async def create_search_agent(
         max_crawl_urls=5,  # Crawl top 5 URLs
         enable_reranking=settings.ENABLE_RERANKING,  # Enable semantic reranking
         rerank_weight=settings.RERANK_WEIGHT,  # Weight for semantic score
+        # Enhanced reranking features (experimental)
+        enable_diversity_penalty=enable_diversity,
+        enable_recency_boost=enable_recency,
+        enable_query_aware=enable_query_aware,
     )
 
     return SearchAgent(deps=deps)
@@ -253,6 +264,9 @@ async def search(
             model=request.model,
             max_sources=max_sources,
             timeout=float(timeout),
+            enable_diversity=request.enable_diversity,
+            enable_recency=request.enable_recency,
+            enable_query_aware=request.enable_query_aware,
         )
 
         # Execute search with timeout and mode
