@@ -80,8 +80,25 @@ def main():
 
         st.subheader("Advanced Parameters")
         if mode == "Search":
-            max_sources = st.slider("Max Sources (override)", 5, 50, 20, help="Leave default to use mode setting")
-            timeout = st.slider("Timeout (s, override)", 10, 300, 60, help="Leave default to use mode setting")
+            # Get mode-specific defaults from search_modes.py
+            mode_defaults = {
+                "speed": {"max_sources": 5, "timeout": 15},
+                "balanced": {"max_sources": 10, "timeout": 45},
+                "deep": {"max_sources": 20, "timeout": 60},
+            }
+            default_sources = mode_defaults[selected_mode]["max_sources"]
+            default_timeout = mode_defaults[selected_mode]["timeout"]
+            
+            max_sources = st.slider(
+                "Max Sources (override)", 
+                5, 50, default_sources,
+                help=f"Leave at {default_sources} to use {selected_mode.upper()} mode default"
+            )
+            timeout = st.slider(
+                "Timeout (s, override)", 
+                10, 300, default_timeout,
+                help=f"Leave at {default_timeout}s to use {selected_mode.upper()} mode default"
+            )
         else:
             max_iterations = st.slider("Max Iterations", 1, 5, 3)
             timeout = st.slider("Timeout (s)", 60, 600, 300)
@@ -122,15 +139,24 @@ def render_search_mode(max_sources: int, timeout: int, model: str, mode: str):
         with st.spinner("Searching..."):
             try:
                 # Build request payload - mode will override max_sources/timeout if not explicitly set
+                # Get mode-specific defaults
+                mode_defaults = {
+                    "speed": {"max_sources": 5, "timeout": 15},
+                    "balanced": {"max_sources": 10, "timeout": 45},
+                    "deep": {"max_sources": 20, "timeout": 60},
+                }
+                default_sources = mode_defaults[mode]["max_sources"]
+                default_timeout = mode_defaults[mode]["timeout"]
+                
                 payload = {
                     "query": query,
                     "mode": mode,
                     "model": model,
                 }
-                # Only include overrides if user changed them from defaults
-                if max_sources != 20:  # 20 is the default slider value
+                # Only include overrides if user changed them from mode defaults
+                if max_sources != default_sources:
                     payload["max_sources"] = max_sources
-                if timeout != 60:  # 60 is the default slider value
+                if timeout != default_timeout:
                     payload["timeout"] = timeout
                 
                 response = httpx.post(

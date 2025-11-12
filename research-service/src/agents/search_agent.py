@@ -34,6 +34,7 @@ from src.services.document.dockling_processor import DocklingProcessor
 from src.services.embedding.embedding_service import EmbeddingService
 from src.services.llm.langfuse_tracer import LangfuseTracer
 from src.services.llm.openrouter_client import OpenRouterClient
+from src.utils.temporal_validator import TemporalValidator
 
 # =============================================================================
 # Pydantic Models for Structured Output
@@ -47,11 +48,24 @@ class SubQuery(BaseModel):
         query: Focused sub-query text (1-200 chars)
         intent: Query intent classification (definition/factual/opinion)
         priority: Execution priority (1=highest, 5=lowest)
+        temporal_scope: Time filter (recent/past_year/past_month/any)
+        specific_year: Specific year mentioned (e.g., 2022, 2023) - overrides temporal_scope
     """
 
     query: str = Field(..., min_length=1, max_length=200)
     intent: str = Field(..., pattern=r"^(definition|factual|opinion)$")
     priority: int = Field(ge=1, le=5)
+    temporal_scope: str = Field(
+        default="any",
+        pattern=r"^(recent|past_year|past_month|past_week|any)$",
+        description="Time filter: recent (past month), past_year, past_month, past_week, any"
+    )
+    specific_year: int | None = Field(
+        default=None,
+        ge=1990,
+        le=2030,
+        description="Specific year if mentioned (e.g., 2022, 2023). Overrides temporal_scope."
+    )
 
 
 class SearchSource(BaseModel):
@@ -194,12 +208,15 @@ class SearchAgent:
         self.deps = deps
         self.max_sources = deps.max_sources
         self.timeout = deps.timeout
+        self.temporal_validator = TemporalValidator()
 
         # Log search configuration
         if deps.serperdev_api_key and deps.serperdev_api_key.strip():
             logger.info(f"SearchAgent initialized with SerperDev (primary) + SearxNG (fallback)")
         else:
             logger.info(f"SearchAgent initialized with SearxNG only (no SerperDev key)")
+        
+        logger.info(f"✅ Temporal validation enabled with post-retrieval filtering")
 
     async def decompose_query(self, query: str) -> list[SubQuery]:
         """Decompose complex query into focused sub-queries using Pydantic AI.
@@ -217,7 +234,8 @@ class SearchAgent:
             >>> print(len(sub_queries))
             2
         """
-        logger.info(f"🧩 Decomposing query: {query}")
+        logger.info(f"🧩 QUERY DECOMPOSITION START")
+        logger.info(f"📥 Input query: '{query}'")
 
         # Use OpenRouter LLM directly with JSON mode for structured decomposition
         system_prompt = """You are a query decomposition expert. Break down user queries into focused sub-queries.
@@ -229,23 +247,81 @@ Guidelines:
 - Intent types: "factual" (facts/data), "definition" (what is X), "opinion" (views/analysis)
 - Priority: 1 (most important) to 5 (least important)
 
+Temporal Detection (CRITICAL - Extract ANY year mentioned):
+- If query mentions SPECIFIC YEAR (2022, 2023, 2024, etc.):
+  * Set "specific_year": [year as integer]
+  * Keep that year in sub-query text
+  * Set temporal_scope to "any"
+  
+- If query has "latest"/"recent"/"new" (no specific year):
+  * Set temporal_scope: "recent" 
+  * Add current year (2025) to sub-query
+  * Set specific_year: null
+  
+- If query has "past month"/"last month":
+  * Set temporal_scope: "past_month"
+  * Set specific_year: null
+  
+- If query has "past week"/"this week":
+  * Set temporal_scope: "past_week"
+  * Set specific_year: null
+  
+- If query has "past year":
+  * Set temporal_scope: "past_year"
+  * Set specific_year: null
+  
+- No time keywords:
+  * Set temporal_scope: "any"
+  * Set specific_year: null
+
 Examples:
+
 Query: "What are AI agents?"
 Response:
 {
   "sub_queries": [
-    {"query": "What are AI agents?", "intent": "definition", "priority": 1}
+    {"query": "What are AI agents?", "intent": "definition", "priority": 1, "temporal_scope": "any", "specific_year": null}
   ]
 }
 
-Query: "Recent news about Microsoft Azure and AWS"
+Query: "Recent news about Microsoft Azure"
 Response:
 {
   "sub_queries": [
-    {"query": "Microsoft Azure recent news", "intent": "factual", "priority": 1},
-    {"query": "AWS recent news", "intent": "factual", "priority": 2}
+    {"query": "Microsoft Azure recent news 2025", "intent": "factual", "priority": 1, "temporal_scope": "recent", "specific_year": null}
   ]
 }
+
+Query: "GitHub Universe 2023 announcements"
+Response:
+{
+  "sub_queries": [
+    {"query": "GitHub Universe 2023 announcements", "intent": "factual", "priority": 1, "temporal_scope": "any", "specific_year": 2023}
+  ]
+}
+
+Query: "AI developments in 2022"
+Response:
+{
+  "sub_queries": [
+    {"query": "AI developments 2022", "intent": "factual", "priority": 1, "temporal_scope": "any", "specific_year": 2022}
+  ]
+}
+
+Query: "Python trends 2020 vs 2024"
+Response:
+{
+  "sub_queries": [
+    {"query": "Python trends 2020", "intent": "factual", "priority": 1, "temporal_scope": "any", "specific_year": 2020},
+    {"query": "Python trends 2024", "intent": "factual", "priority": 1, "temporal_scope": "any", "specific_year": 2024}
+  ]
+}
+
+CRITICAL RULES:
+1. ALWAYS extract specific years (2022, 2023, 2024, etc.) and set specific_year field
+2. KEEP the year in the sub-query text (don't remove it)
+3. specific_year overrides temporal_scope for search filtering
+4. Only use "recent" temporal_scope when NO specific year mentioned
 
 Respond with valid JSON only."""
 
@@ -257,7 +333,20 @@ Respond with valid JSON only."""
                 {"role": "user", "content": f"Query: {query}\n\nDecompose this into sub-queries."}
             ]
             
-            # Use OpenRouter client directly with JSON mode
+            # ============ CRITICAL LOG: LLM INPUT ============
+            logger.info(f"🤖 LLM CALL: Query Decomposition")
+            logger.info(f"📤 Model: deepseek/deepseek-r1-distill-llama-70b:free")
+            logger.info(f"📤 Temperature: 0.3, Max Tokens: 500")
+            logger.info(f"📤 Messages count: {len(messages)}")
+            logger.info(f"📤 System prompt length: {len(system_prompt)} chars")
+            logger.info(f"📤 User message: '{messages[1]['content'][:200]}...'")
+            
+            # Use DeepSeek-R1 (free model) via OpenRouter
+            # Note: OpenRouterClient is initialized with a default model,
+            # but we can override by temporarily changing it
+            original_model = self.deps.llm_client.model
+            self.deps.llm_client.model = "deepseek/deepseek-r1-distill-llama-70b:free"  # FREE tier
+            
             response = await self.deps.llm_client.chat(
                 messages=messages,
                 temperature=0.3,
@@ -265,25 +354,67 @@ Respond with valid JSON only."""
                 response_format={"type": "json_object"},  # Force JSON output
             )
             
-            # Parse JSON response
-            content = response["content"].strip()
-            logger.info(f"📄 Raw LLM response (JSON):\n{content}")
+            # Restore original model
+            self.deps.llm_client.model = original_model
             
+            # ============ CRITICAL LOG: LLM RESPONSE ============
+            content = response["content"].strip()
+            logger.info(f"� LLM RESPONSE received")
+            logger.info(f"📥 Response length: {len(content)} chars")
+            logger.info(f"📥 Raw response:\n{content}")
+            
+            # Parse JSON response
             data = json.loads(content)
-            logger.info(f"✅ Parsed JSON data: {data}")
+            logger.info(f"✅ JSON parsing successful")
+            logger.info(f"✅ Parsed data keys: {list(data.keys())}")
             
             # Validate and convert to SubQuery objects
             decomposition = QueryDecomposition(**data)
-            logger.info(f"🎯 Successfully decomposed into {len(decomposition.sub_queries)} sub-queries:")
+            logger.info(f"🎯 DECOMPOSITION COMPLETE: {len(decomposition.sub_queries)} sub-queries")
+            
             for i, sq in enumerate(decomposition.sub_queries, 1):
-                logger.info(f"  [{i}] Query: '{sq.query}'")
-                logger.info(f"      Intent: {sq.intent}, Priority: {sq.priority}")
+                logger.info(
+                    f"  [{i}] Query: '{sq.query}' | "
+                    f"Intent: {sq.intent} | "
+                    f"Priority: {sq.priority} | "
+                    f"Temporal: {sq.temporal_scope} | "
+                    f"Year: {sq.specific_year or 'N/A'}"
+                )
+            
             return decomposition.sub_queries
             
         except Exception as e:
             logger.error(f"❌ Query decomposition failed: {e}, using fallback")
             # Fallback: treat as single factual query
-            return [SubQuery(query=query, intent="factual", priority=1)]
+            
+            # Extract specific year from query (2020-2030 range)
+            import re
+            year_pattern = r'\b(20[2-3][0-9])\b'  # Matches 2020-2039
+            year_match = re.search(year_pattern, query)
+            specific_year = int(year_match.group(1)) if year_match else None
+            
+            # Detect temporal keywords
+            temporal_keywords = ["latest", "recent", "new", "now", "current", "today"]
+            has_temporal_intent = any(kw in query.lower() for kw in temporal_keywords)
+            
+            # Determine temporal scope (specific year takes priority)
+            if specific_year:
+                temporal_scope = "any"  # Year filtering handles it
+                logger.info(f"  Fallback detected specific year: {specific_year}")
+            elif has_temporal_intent:
+                temporal_scope = "recent"
+                logger.info(f"  Fallback detected temporal keywords: recent")
+            else:
+                temporal_scope = "any"
+                logger.info(f"  Fallback: no temporal filtering")
+            
+            return [SubQuery(
+                query=query,
+                intent="factual",
+                priority=1,
+                temporal_scope=temporal_scope,
+                specific_year=specific_year
+            )]
 
     async def coordinate_search(self, sub_queries: list[SubQuery]) -> list[SearchSource]:
         """Coordinate parallel searches across multiple sources.
@@ -348,8 +479,46 @@ Respond with valid JSON only."""
         """
         # Try SerperDev first if API key is available
         if self.deps.serperdev_api_key and self.deps.serperdev_api_key.strip():
-            logger.info(f"🔍 Trying SerperDev for query: {sub_query.query}")
+            temporal_info = f"temporal: {sub_query.temporal_scope}"
+            if sub_query.specific_year:
+                temporal_info += f", year: {sub_query.specific_year}"
+            
+            # ============ CRITICAL LOG: SEARCH API INPUT ============
+            logger.info(f"🔍 SEARCH API CALL: SerperDev")
+            logger.info(f"📤 Query: '{sub_query.query}'")
+            logger.info(f"📤 Temporal: {temporal_info}")
+            
             try:
+                # Build SerperDev request with temporal filtering
+                search_params = {
+                    "q": sub_query.query,
+                    "num": 10,
+                }
+                
+                # Priority 1: Specific year mentioned (e.g., "2022", "2023")
+                if sub_query.specific_year:
+                    # Use Google's custom date range: cd_min (start date) and cd_max (end date)
+                    # Format: cdr:1,cd_min:MM/DD/YYYY,cd_max:MM/DD/YYYY
+                    year = sub_query.specific_year
+                    # Search entire year: Jan 1 to Dec 31
+                    search_params["tbs"] = f"cdr:1,cd_min:1/1/{year},cd_max:12/31/{year}"
+                    logger.info(f"  📅 Filtering: Specific year {year} (Jan 1 - Dec 31)")
+                
+                # Priority 2: Relative time filters (past week/month/year/recent)
+                elif sub_query.temporal_scope == "past_week":
+                    search_params["tbs"] = "qdr:w"
+                    logger.info(f"  📅 Filtering: Past week")
+                elif sub_query.temporal_scope == "past_month" or sub_query.temporal_scope == "recent":
+                    search_params["tbs"] = "qdr:m"
+                    logger.info(f"  📅 Filtering: Past month (recent)")
+                elif sub_query.temporal_scope == "past_year":
+                    search_params["tbs"] = "qdr:y"
+                    logger.info(f"  📅 Filtering: Past year")
+                else:
+                    logger.info(f"  📅 No time filter (any)")
+                
+                logger.info(f"📤 Search params: {search_params}")
+                
                 async with httpx.AsyncClient() as client:
                     response = await client.post(
                         "https://google.serper.dev/search",
@@ -357,22 +526,30 @@ Respond with valid JSON only."""
                             "X-API-KEY": self.deps.serperdev_api_key,
                             "Content-Type": "application/json",
                         },
-                        json={"q": sub_query.query, "num": 10},
+                        json=search_params,
                         timeout=self.timeout,
                     )
 
-                    logger.info(f"SerperDev response status: {response.status_code}")
+                    # ============ CRITICAL LOG: SEARCH API RESPONSE ============
+                    logger.info(f"📥 SEARCH API RESPONSE")
+                    logger.info(f"📥 Status: {response.status_code}")
 
                     if response.status_code == 200:
                         data = response.json()
                         organic = data.get("organic", [])
 
-                        logger.info(
-                            f"✅ SerperDev returned {len(organic)} results for: {sub_query.query}"
-                        )
+                        logger.info(f"📥 Results count: {len(organic)}")
+                        logger.info(f"✅ SerperDev SUCCESS for: {sub_query.query}")
+                        
+                        # Log sample results
+                        for i, r in enumerate(organic[:3], 1):
+                            logger.info(
+                                f"  [{i}] {r.get('title', 'No title')[:60]}... | "
+                                f"URL: {r.get('link', 'No URL')[:80]}"
+                            )
 
                         if len(organic) > 0:
-                            return [
+                            sources = [
                                 SearchSource(
                                     title=r.get("title", ""),
                                     url=r.get("link", ""),
@@ -382,6 +559,8 @@ Respond with valid JSON only."""
                                 )
                                 for r in organic
                             ]
+                            logger.info(f"📦 Returning {len(sources)} SearchSource objects")
+                            return sources
                         else:
                             logger.warning("SerperDev returned 0 results, trying SearxNG fallback")
                     else:
@@ -686,6 +865,12 @@ Respond with valid JSON only."""
         enriched_count = sum(1 for s in sources[:7] if s.content)
         logger.info(f"📊 Using {enriched_count}/7 sources with full content, {7-enriched_count} with snippets only")
 
+        # ============ CRITICAL LOG: ANSWER GENERATION INPUT ============
+        logger.info(f"💬 ANSWER GENERATION START")
+        logger.info(f"📥 Query: '{query}'")
+        logger.info(f"📥 Sources: {len(sources)} total, using top 7")
+        logger.info(f"📥 Context length: {len(context)} chars")
+        
         # Build prompt for answer generation
         prompt = f"""You are a helpful search assistant. Answer the user's question by extracting and explaining SPECIFIC information from the search results.
 
@@ -731,22 +916,41 @@ MANDATORY REQUIREMENTS:
 
 Write a detailed answer with full explanations for everything:"""
 
-        logger.info("🤖 Generating answer from sources using LLM...")
+        # ============ CRITICAL LOG: LLM CALL FOR ANSWER ============
+        logger.info(f"🤖 LLM CALL: Answer Generation")
+        logger.info(f"📤 Model: deepseek/deepseek-r1-distill-llama-70b:free")
+        logger.info(f"📤 Temperature: 0.7, Max Tokens: 2048")
+        logger.info(f"📤 Prompt length: {len(prompt)} chars")
+        logger.info(f"📤 Prompt preview: {prompt[:500]}...")
 
         try:
+            # Use DeepSeek-R1 (free model) via OpenRouter
+            original_model = self.deps.llm_client.model
+            self.deps.llm_client.model = "deepseek/deepseek-r1-distill-llama-70b:free"  # FREE tier
+            
             response = await self.deps.llm_client.chat(
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.7,
                 max_tokens=2048,  # Allow longer, more detailed responses
             )
+            
+            # Restore original model
+            self.deps.llm_client.model = original_model
 
+            # ============ CRITICAL LOG: LLM RESPONSE ============
+            logger.info(f"📥 LLM RESPONSE received")
+            
             # Extract answer from response
             if isinstance(response, dict) and "content" in response:
                 answer = response["content"].strip()
-                logger.info(f"✅ Generated answer ({len(answer)} chars)")
+                word_count = len(answer.split())
+                logger.info(f"📥 Answer length: {len(answer)} chars, {word_count} words")
+                logger.info(f"📥 Answer preview: {answer[:300]}...")
+                logger.info(f"✅ ANSWER GENERATION COMPLETE")
                 return answer
             else:
-                logger.warning("LLM response format unexpected, using fallback")
+                logger.warning("⚠️ LLM response format unexpected, using fallback")
+                logger.warning(f"Response type: {type(response)}, keys: {response.keys() if isinstance(response, dict) else 'N/A'}")
                 return self._generate_fallback_answer(query, sources)
 
         except Exception as e:
@@ -872,8 +1076,36 @@ Write a detailed answer with full explanations for everything:"""
                 logger.info("Crawling disabled by mode, using snippets only")
                 enriched_sources = raw_sources
 
+            # 3.5. Temporal validation (post-retrieval filtering - Big Tech approach)
+            logger.info(f"🕒 TEMPORAL VALIDATION START")
+            logger.info(f"📊 Input: {len(enriched_sources)} sources before validation")
+            
+            # Extract temporal intent from sub_queries
+            target_year = None
+            temporal_scope = "any"
+            
+            for sq in sub_queries:
+                if sq.specific_year:
+                    target_year = sq.specific_year
+                    logger.info(f"  Detected target year: {target_year}")
+                    break
+                elif sq.temporal_scope != "any":
+                    temporal_scope = sq.temporal_scope
+                    logger.info(f"  Detected temporal scope: {temporal_scope}")
+            
+            # Apply temporal validation (penalize mismatched sources)
+            validated_sources = self.temporal_validator.filter_and_rerank_sources(
+                sources=enriched_sources,
+                target_year=target_year,
+                temporal_scope=temporal_scope,
+                strict_filtering=False  # Penalize, don't remove
+            )
+            
+            logger.info(f"✅ TEMPORAL VALIDATION COMPLETE")
+            logger.info(f"📊 Output: {len(validated_sources)} sources after validation")
+
             # 4. Rank results (reranking controlled by mode config)
-            ranked_sources = await self.rank_results(enriched_sources, query)
+            ranked_sources = await self.rank_results(validated_sources, query)
 
             # 5. Generate answer from sources
             answer = await self.generate_answer(query, ranked_sources)
