@@ -23,6 +23,7 @@ from src.api.v1.schemas import (
     ResearchPlanResponse,
     ResearchRequest,
     ResearchResponse,
+    ResearchStepResponse,
 )
 from src.core.config import settings
 from src.database.models import ResearchSession
@@ -152,6 +153,34 @@ async def store_research_session(
     await db.commit()
 
 
+def normalize_complexity(complexity: str) -> str:
+    """Normalize complexity value to match schema requirements.
+    
+    Args:
+        complexity: Raw complexity value from LLM (e.g., 'medium', 'moderate', 'simple')
+        
+    Returns:
+        Normalized complexity: 'simple', 'moderate', or 'complex'
+    """
+    complexity_lower = complexity.lower().strip()
+    
+    # Map variations to valid values
+    complexity_map = {
+        "easy": "simple",
+        "basic": "simple",
+        "simple": "simple",
+        "medium": "moderate",
+        "moderate": "moderate",
+        "average": "moderate",
+        "hard": "complex",
+        "difficult": "complex",
+        "complex": "complex",
+        "advanced": "complex",
+    }
+    
+    return complexity_map.get(complexity_lower, "moderate")  # Default to moderate
+
+
 def convert_research_output_to_response(
     session_id: uuid.UUID,
     query: str,
@@ -163,29 +192,37 @@ def convert_research_output_to_response(
     return ResearchResponse(
         session_id=session_id,
         query=query,
-        research_plan=ResearchPlanResponse(
-            queries=[q.query for q in output.research_plan.queries],
-            focus_areas=output.research_plan.focus_areas,
-            estimated_sources=output.research_plan.estimated_sources,
+        plan=ResearchPlanResponse(
+            original_query=output.plan.original_query,
+            steps=[
+                ResearchStepResponse(
+                    step_number=step.step_number,
+                    description=step.description,
+                    search_query=step.search_query,
+                    expected_outcome=step.expected_outcome,
+                    depends_on=step.depends_on,
+                )
+                for step in output.plan.steps
+            ],
+            estimated_time=output.plan.estimated_time,
+            complexity=normalize_complexity(output.plan.complexity),
         ),
         findings=output.findings,
-        synthesis=output.synthesis,
         citations=[
             CitationResponse(
-                id=idx + 1,
+                source_id=cite.source_id,
                 title=cite.title,
                 url=cite.url,
-                snippet=cite.snippet,
+                excerpt=cite.excerpt,
                 relevance=cite.relevance,
-                used_in_synthesis=cite.used_in_synthesis,
             )
-            for idx, cite in enumerate(output.citations)
+            for cite in output.citations
         ],
-        execution_time=output.execution_time,
+        execution_time=output.plan.estimated_time,  # Use plan estimate
+        execution_steps=[],  # TODO: Add execution step tracking
         confidence=output.confidence,
         model_used=model_used,
         trace_url=trace_url,
-        created_at=datetime.utcnow(),
     )
 
 

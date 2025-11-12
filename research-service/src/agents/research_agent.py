@@ -144,17 +144,22 @@ Return JSON with:
         import json
         logger = structlog.get_logger(__name__)
         
+        # Import extract_json_from_markdown from search_agent
+        from .search_agent import extract_json_from_markdown
+        
         if isinstance(response, dict) and "content" in response:
             content_str = str(response["content"])
             logger.debug("LLM response content", content_preview=content_str[:200])
             try:
+                # Extract JSON from markdown code blocks if present
+                clean_content = extract_json_from_markdown(content_str)
                 # Parse JSON from content string
-                plan_data = json.loads(content_str)
+                plan_data = json.loads(clean_content)
                 steps_data = plan_data.get("steps", [])
                 estimated_time = plan_data.get("estimated_time", 60.0)
                 complexity = plan_data.get("complexity", "medium")
-            except json.JSONDecodeError:
-                logger.error("Failed to parse plan JSON", content=content_str[:500])
+            except json.JSONDecodeError as e:
+                logger.error("Failed to parse plan JSON", content=content_str[:500], error=str(e))
                 steps_data = []
                 estimated_time = 60.0
                 complexity = "medium"
@@ -392,7 +397,15 @@ MANDATORY Rules:
 - Cite source numbers for every fact
 - Use bullet points with explanations: "- Item Name: what it does/is [source]"
 - 600+ words minimum with full explanations
-- Add context: what, why, how, when for each point"""
+- Add context: what, why, how, when for each point
+
+CRITICAL - TEMPORAL ACCURACY:
+- PRIORITIZE recent information over old information
+- ALWAYS include dates when available (e.g., "announced in November 2024", "as of 2025")
+- If sources have conflicting dates, USE THE MOST RECENT information
+- IGNORE outdated information if newer data is available
+- When discussing events/products/features, state WHEN they occurred/were released
+- Mark historical context clearly (e.g., "Previously in 2023...")"""
 
         # Build citation context
         citation_context = "\n\n".join(
@@ -433,7 +446,14 @@ EXTRACT AND EXPLAIN ALL INFORMATION:
 
 5. 600+ words with full explanations for everything
 
-Write detailed synthesis with descriptions for every item:"""
+6. DATE AWARENESS - CRITICAL:
+   - Check source URLs and titles for dates
+   - Prioritize information from 2024-2025
+   - If you see dates like "2023" or "October 2023", mark them as OUTDATED
+   - Look for phrases like "latest", "new", "recent", "announced", "2024", "2025"
+   - State the timeframe for every major claim (e.g., "As of November 2024...")
+
+Write detailed synthesis with descriptions for every item AND their dates:"""
 
         response = await self.llm_client.chat(
             messages=[

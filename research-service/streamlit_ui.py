@@ -308,40 +308,43 @@ def render_research_result(data: dict):
     """Render research result."""
     # Research Plan
     st.markdown("### 📋 Research Plan")
-    plan = data.get("research_plan", {})
-    st.write(f"**Focus Areas:** {', '.join(plan.get('focus_areas', []))}")
-    st.write(f"**Estimated Sources:** {plan.get('estimated_sources', 0)}")
+    plan = data.get("plan", {})
+    st.write(f"**Original Query:** {plan.get('original_query', 'N/A')}")
+    st.write(f"**Estimated Time:** {plan.get('estimated_time', 0):.0f}s")
+    st.write(f"**Complexity:** {plan.get('complexity', 'N/A').title()}")
 
-    if plan.get("queries"):
-        st.markdown("**Queries:**")
-        for q in plan["queries"]:
-            st.markdown(f"- {q}")
+    if plan.get("steps"):
+        st.markdown("**Research Steps:**")
+        for step in plan["steps"]:
+            with st.expander(f"Step {step.get('step_number', 0)}: {step.get('description', 'N/A')}", expanded=False):
+                st.markdown(f"**Search Query:** {step.get('search_query', 'N/A')}")
+                st.markdown(f"**Expected Outcome:** {step.get('expected_outcome', 'N/A')}")
+                if step.get('depends_on'):
+                    st.markdown(f"**Depends On Steps:** {', '.join(map(str, step['depends_on']))}")
 
-    # Findings
-    st.markdown("### 🔍 Key Findings")
-    for idx, finding in enumerate(data.get("findings", []), 1):
-        st.markdown(f"{idx}. {finding}")
-
-    # Synthesis
-    st.markdown("### 📝 Synthesis")
-    st.success(data.get("synthesis", "No synthesis available"))
+    # Findings (now a single string, not an array)
+    st.markdown("### � Key Findings")
+    findings_text = data.get("findings", "No findings available")
+    st.markdown(findings_text)
 
     # Metadata
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
     with col1:
         st.metric("Execution Time", f"{data.get('execution_time', 0):.2f}s")
     with col2:
         st.metric("Confidence", f"{data.get('confidence', 0):.2%}")
+    with col3:
+        st.metric("Model", data.get('model_used', 'N/A').split('/')[-1])
 
     # Citations
     st.markdown("### 📚 Citations")
-    for cite in data.get("citations", []):
+    for idx, cite in enumerate(data.get("citations", []), 1):
         with st.container():
-            used = "✅" if cite.get("used_in_synthesis") else "📄"
+            relevance_emoji = "🔥" if cite.get("relevance", 0) >= 0.8 else "✅" if cite.get("relevance", 0) >= 0.6 else "📄"
             st.markdown(
-                f"{used} **[{cite.get('id')}] [{cite.get('title', 'No title')}]({cite.get('url', '#')})**"
+                f"{relevance_emoji} **[{idx}] [{cite.get('title', 'No title')}]({cite.get('url', '#')})**"
             )
-            st.caption(cite.get("snippet", "No snippet"))
+            st.caption(cite.get("excerpt", "No excerpt"))
             st.progress(cite.get("relevance", 0), text=f"Relevance: {cite.get('relevance', 0):.2%}")
             st.divider()
 
