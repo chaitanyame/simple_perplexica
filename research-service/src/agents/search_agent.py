@@ -34,6 +34,8 @@ from src.services.document.dockling_processor import DocklingProcessor
 from src.services.embedding.embedding_service import EmbeddingService
 from src.services.llm.langfuse_tracer import LangfuseTracer
 from src.services.llm.openrouter_client import OpenRouterClient
+from src.utils.language_detector import detect_language, get_language_name
+from src.utils.query_normalizer import normalize_query
 from src.utils.temporal_validator import TemporalValidator
 
 # =============================================================================
@@ -50,6 +52,7 @@ class SubQuery(BaseModel):
         priority: Execution priority (1=highest, 5=lowest)
         temporal_scope: Time filter (recent/past_year/past_month/any)
         specific_year: Specific year mentioned (e.g., 2022, 2023) - overrides temporal_scope
+        language: Query language ISO code (en/es/fr/de) for region-specific results
     """
 
     query: str = Field(..., min_length=1, max_length=200)
@@ -65,6 +68,11 @@ class SubQuery(BaseModel):
         ge=1990,
         le=2030,
         description="Specific year if mentioned (e.g., 2022, 2023). Overrides temporal_scope."
+    )
+    language: str = Field(
+        default="en",
+        pattern=r"^(en|es|fr|de)$",
+        description="Query language: en (English), es (Spanish), fr (French), de (German)"
     )
 
 
@@ -235,7 +243,16 @@ class SearchAgent:
             2
         """
         logger.info(f"🧩 QUERY DECOMPOSITION START")
-        logger.info(f"📥 Input query: '{query}'")
+        logger.info(f"📥 Input query (raw): '{query}'")
+        
+        # Normalize query for consistency
+        normalized_query = normalize_query(query)
+        logger.info(f"📥 Input query (normalized): '{normalized_query}'")
+        
+        # Detect language for better search results
+        detected_lang = detect_language(query)
+        lang_name = get_language_name(detected_lang)
+        logger.info(f"🌍 Detected language: {lang_name} ({detected_lang})")
 
         # Use OpenRouter LLM directly with JSON mode for structured decomposition
         system_prompt = """You are a query decomposition expert. Break down user queries into focused sub-queries.
@@ -335,17 +352,17 @@ Respond with valid JSON only."""
             
             # ============ CRITICAL LOG: LLM INPUT ============
             logger.info(f"🤖 LLM CALL: Query Decomposition")
-            logger.info(f"📤 Model: deepseek/deepseek-r1-distill-llama-70b:free")
+            logger.info(f"📤 Model: meta-llama/llama-4-maverick:free")
             logger.info(f"📤 Temperature: 0.3, Max Tokens: 500")
             logger.info(f"📤 Messages count: {len(messages)}")
             logger.info(f"📤 System prompt length: {len(system_prompt)} chars")
             logger.info(f"📤 User message: '{messages[1]['content'][:200]}...'")
             
-            # Use DeepSeek-R1 (free model) via OpenRouter
+            # Use Llama 4 Maverick (free model) via OpenRouter
             # Note: OpenRouterClient is initialized with a default model,
             # but we can override by temporarily changing it
             original_model = self.deps.llm_client.model
-            self.deps.llm_client.model = "deepseek/deepseek-r1-distill-llama-70b:free"  # FREE tier
+            self.deps.llm_client.model = "meta-llama/llama-4-maverick:free"  # FREE tier
             
             response = await self.deps.llm_client.chat(
                 messages=messages,
@@ -370,6 +387,11 @@ Respond with valid JSON only."""
             
             # Validate and convert to SubQuery objects
             decomposition = QueryDecomposition(**data)
+            
+            # Add detected language to all sub-queries
+            for sq in decomposition.sub_queries:
+                sq.language = detected_lang
+            
             logger.info(f"🎯 DECOMPOSITION COMPLETE: {len(decomposition.sub_queries)} sub-queries")
             
             for i, sq in enumerate(decomposition.sub_queries, 1):
@@ -378,7 +400,8 @@ Respond with valid JSON only."""
                     f"Intent: {sq.intent} | "
                     f"Priority: {sq.priority} | "
                     f"Temporal: {sq.temporal_scope} | "
-                    f"Year: {sq.specific_year or 'N/A'}"
+                    f"Year: {sq.specific_year or 'N/A'} | "
+                    f"Lang: {sq.language}"
                 )
             
             return decomposition.sub_queries
@@ -413,7 +436,8 @@ Respond with valid JSON only."""
                 intent="factual",
                 priority=1,
                 temporal_scope=temporal_scope,
-                specific_year=specific_year
+                specific_year=specific_year,
+                language=detected_lang
             )]
 
     async def coordinate_search(self, sub_queries: list[SubQuery]) -> list[SearchSource]:
@@ -486,13 +510,15 @@ Respond with valid JSON only."""
             # ============ CRITICAL LOG: SEARCH API INPUT ============
             logger.info(f"🔍 SEARCH API CALL: SerperDev")
             logger.info(f"📤 Query: '{sub_query.query}'")
+            logger.info(f"📤 Language: {sub_query.language}")
             logger.info(f"📤 Temporal: {temporal_info}")
             
             try:
-                # Build SerperDev request with temporal filtering
+                # Build SerperDev request with temporal filtering and language
                 search_params = {
                     "q": sub_query.query,
                     "num": 10,
+                    "gl": sub_query.language,  # Language/region parameter
                 }
                 
                 # Priority 1: Specific year mentioned (e.g., "2022", "2023")
@@ -918,15 +944,15 @@ Write a detailed answer with full explanations for everything:"""
 
         # ============ CRITICAL LOG: LLM CALL FOR ANSWER ============
         logger.info(f"🤖 LLM CALL: Answer Generation")
-        logger.info(f"📤 Model: deepseek/deepseek-r1-distill-llama-70b:free")
+        logger.info(f"📤 Model: meta-llama/llama-4-maverick:free")
         logger.info(f"📤 Temperature: 0.7, Max Tokens: 2048")
         logger.info(f"📤 Prompt length: {len(prompt)} chars")
         logger.info(f"📤 Prompt preview: {prompt[:500]}...")
 
         try:
-            # Use DeepSeek-R1 (free model) via OpenRouter
+            # Use Llama 4 Maverick (free model) via OpenRouter
             original_model = self.deps.llm_client.model
-            self.deps.llm_client.model = "deepseek/deepseek-r1-distill-llama-70b:free"  # FREE tier
+            self.deps.llm_client.model = "meta-llama/llama-4-maverick:free"  # FREE tier
             
             response = await self.deps.llm_client.chat(
                 messages=[{"role": "user", "content": prompt}],

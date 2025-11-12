@@ -15,7 +15,7 @@ RUN useradd -m -u 1000 research
 
 # Install Python dependencies
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install -r requirements.txt
 
 # Switch to research user for Playwright installation
 USER research
