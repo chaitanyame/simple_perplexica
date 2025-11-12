@@ -21,7 +21,7 @@ from ..services.embedding.embedding_service import EmbeddingService
 
 class Claim(BaseModel):
     """Single atomic claim extracted from synthesis.
-    
+
     Attributes:
         text: The claim text
         claim_id: Unique identifier for this claim
@@ -30,8 +30,10 @@ class Claim(BaseModel):
         is_grounded: Whether claim meets grounding threshold
         evidence_snippets: Exact text from sources supporting this claim
         citation_markers: Citation markers like ["1"], ["2"] from original text
+        citation_quality_score: Phase 3 - Quality of supporting citations (0.0-1.0)
+        citation_authority_level: Phase 3 - Best authority level of supporting sources
     """
-    
+
     text: str = Field(..., description="Claim text")
     claim_id: str = Field(..., description="Unique claim identifier")
     supporting_sources: list[str] = Field(default_factory=list, description="Supporting source IDs")
@@ -39,6 +41,9 @@ class Claim(BaseModel):
     is_grounded: bool = Field(False, description="Meets grounding threshold")
     evidence_snippets: list[str] = Field(default_factory=list, description="Evidence from sources")
     citation_markers: list[str] = Field(default_factory=list, description="Citation markers [1], [2]")
+    # Phase 3: Citation quality enhancements
+    citation_quality_score: float = Field(0.5, ge=0.0, le=1.0, description="Quality of supporting citations")
+    citation_authority_level: str = Field("secondary", description="Best authority of supporting sources")
 
 
 class GroundingResult(BaseModel):
@@ -489,20 +494,150 @@ class ClaimGrounder:
         threshold: float = 0.5,
     ) -> bool:
         """Check if claim is likely hallucinated.
-        
+
         A claim is considered hallucinated if its grounding score
         falls below the specified threshold.
-        
+
         Args:
             claim: Claim to check
             threshold: Minimum score to not be hallucination (default: 0.5)
-            
+
         Returns:
             True if claim is likely hallucinated, False otherwise
-            
+
         Example:
             >>> claim.grounding_score = 0.3
             >>> grounder.detect_hallucination(claim)
             True
         """
         return claim.grounding_score < threshold
+
+    # =========================================================================
+    # Phase 3: Citation Quality Verification Methods
+    # =========================================================================
+
+    def _grade_citation_authority(self, citation: Citation) -> str:
+        """Grade citation authority level based on source characteristics.
+
+        Authority levels:
+        - "primary": Official documentation and authoritative sources
+        - "secondary": Reputable publications and high-relevance sources
+        - "tertiary": General web sources and lower-relevance sources
+
+        Args:
+            citation: Citation to grade
+
+        Returns:
+            Authority level: "primary" | "secondary" | "tertiary"
+
+        Example:
+            >>> citation = Citation(..., url="https://docs.python.org", relevance=0.95)
+            >>> grounder._grade_citation_authority(citation)
+            "primary"
+        """
+        url_lower = citation.url.lower()
+
+        # Primary (official documentation)
+        primary_domains = [
+            "docs.microsoft.com",
+            "cloud.google.com",
+            "aws.amazon.com",
+            "github.com/official",
+            "github.com/python",
+            "docs.python.org",
+            "docs.oracle.com",
+            "developer.apple.com",
+            "developer.mozilla.org",
+            ".org/docs",
+            "official-docs",
+            "official documentation"
+        ]
+
+        if any(domain in url_lower for domain in primary_domains):
+            return "primary"
+
+        # Secondary (reputable sources based on relevance)
+        if citation.relevance >= 0.8:
+            return "secondary"
+
+        # Tertiary (general sources)
+        return "tertiary"
+
+    async def calculate_citation_quality(
+        self,
+        claim: Claim,
+        citations: list[Citation]
+    ) -> float:
+        """Calculate overall quality of citations supporting a claim.
+
+        Quality score components:
+        - Relevance: How well the source matches the claim (0-1)
+        - Freshness: How recent the source is (0-1)
+        - Authority: Authority level multiplier (primary=1.2, secondary=1.0, tertiary=0.7)
+
+        Args:
+            claim: Claim to evaluate
+            citations: Available citations to evaluate
+
+        Returns:
+            Quality score (0.0-1.0), higher is better
+
+        Example:
+            >>> quality = await grounder.calculate_citation_quality(claim, citations)
+            >>> print(f"Citation quality: {quality:.2f}")
+        """
+        if not claim.supporting_sources:
+            return 0.0
+
+        quality_scores = []
+
+        # Evaluate best supporting source
+        for source_id in claim.supporting_sources[:1]:
+            citation = next((c for c in citations if c.source_id == source_id), None)
+            if not citation:
+                continue
+
+            # Score components
+            relevance_score = citation.relevance  # 0-1
+            freshness_score = citation.freshness_score  # 0-1
+
+            # Authority multiplier
+            authority_multiplier = {
+                "primary": 1.2,
+                "secondary": 1.0,
+                "tertiary": 0.7
+            }.get(citation.authority_level, 1.0)
+
+            # Combined quality score
+            quality = (relevance_score + freshness_score) / 2 * authority_multiplier
+            quality_scores.append(min(quality, 1.0))
+
+        return sum(quality_scores) / len(quality_scores) if quality_scores else 0.5
+
+    def _reorder_claims_by_citation_quality(
+        self,
+        claims: list[Claim]
+    ) -> list[Claim]:
+        """Reorder claims by citation quality (best citations first).
+
+        Sorting order:
+        1. Citation quality score (highest first)
+        2. Grounding score (highest first)
+
+        This ensures claims with the best supporting evidence appear first.
+
+        Args:
+            claims: Claims to reorder
+
+        Returns:
+            Claims sorted by citation quality
+
+        Example:
+            >>> sorted_claims = grounder._reorder_claims_by_citation_quality(claims)
+            >>> print(f"Best claim: {sorted_claims[0].text} (quality={sorted_claims[0].citation_quality_score:.2f})")
+        """
+        return sorted(
+            claims,
+            key=lambda c: (c.citation_quality_score, c.grounding_score),
+            reverse=True
+        )

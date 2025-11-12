@@ -235,6 +235,8 @@ def convert_search_output_to_response(
         confidence=output.confidence,
         model_used=model_used,
         trace_url=trace_url,
+        grounding_score=output.grounding_score,
+        hallucination_count=output.hallucination_count,
         created_at=datetime.utcnow(),
     )
 

@@ -132,6 +132,8 @@ class SearchResponse(BaseModel):
         confidence: Result confidence (0-1)
         model_used: LLM model used
         trace_url: Langfuse trace URL (if available)
+        grounding_score: Hallucination detection score (0-1, higher = better)
+        hallucination_count: Number of unsupported claims detected
         created_at: Response timestamp
     """
 
@@ -145,6 +147,8 @@ class SearchResponse(BaseModel):
     confidence: float = Field(..., ge=0.0, le=1.0, description="Result confidence")
     model_used: str = Field(..., description="LLM model used")
     trace_url: str | None = Field(None, description="Langfuse trace URL")
+    grounding_score: float | None = Field(None, ge=0.0, le=1.0, description="Hallucination detection score (0-1)")
+    hallucination_count: int | None = Field(None, ge=0, description="Number of unsupported claims detected")
     created_at: datetime = Field(default_factory=datetime.utcnow, description="Response timestamp")
 
 

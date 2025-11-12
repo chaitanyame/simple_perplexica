@@ -46,6 +46,8 @@ from src.services.search.searxng_client import SearxNGClient
 from src.utils.language_detector import detect_language, get_language_name
 from src.utils.query_normalizer import normalize_query
 from src.utils.temporal_validator import TemporalValidator
+from src.utils.claim_grounder import ClaimGrounder
+from src.models.citation import Citation
 
 # =============================================================================
 # Pydantic Models for Structured Output
@@ -137,6 +139,8 @@ class SearchOutput(BaseModel):
         sources: Ranked and filtered search sources
         execution_time: Total execution time in seconds
         confidence: Overall confidence score (0.0-1.0)
+        grounding_score: Hallucination detection score (0-1, higher = better)
+        hallucination_count: Number of unsupported claims detected
     """
 
     answer: str = Field(..., min_length=1, description="AI-generated answer")
@@ -144,6 +148,8 @@ class SearchOutput(BaseModel):
     sources: list[SearchSource]
     execution_time: float
     confidence: float = Field(ge=0.0, le=1.0)
+    grounding_score: float | None = Field(None, ge=0.0, le=1.0, description="Hallucination detection score")
+    hallucination_count: int | None = Field(None, ge=0, description="Number of unsupported claims")
 
 
 # =============================================================================
@@ -1069,25 +1075,595 @@ Respond with valid JSON only."""
         return filtered[: self.max_sources]
 
 
+    # =========================================================================
+    # Content-Type Detection and Analysis (Phase 2)
+    # =========================================================================
+
+    def _analyze_source_composition(self, sources: list[SearchSource]) -> dict:
+        """Analyze the composition of sources to detect content types.
+
+        Examines sources to determine:
+        - Ratio of academic vs news vs technical content
+        - Authority levels (official, third-party, news outlets)
+        - Document types (web pages, PDFs, code repos, arxiv papers)
+
+        Args:
+            sources: List of SearchSource objects
+
+        Returns:
+            Dictionary with composition metrics:
+                - academic_ratio: float (0.0-1.0)
+                - news_ratio: float (0.0-1.0)
+                - technical_ratio: float (0.0-1.0)
+                - authority_score: float (0.0-1.0)
+                - has_code_samples: bool
+                - has_official_docs: bool
+                - primary_type: str ("academic", "news", "technical", "general", "mixed")
+        """
+        if not sources:
+            return {
+                "academic_ratio": 0.0,
+                "news_ratio": 0.0,
+                "technical_ratio": 0.0,
+                "authority_score": 0.5,
+                "has_code_samples": False,
+                "has_official_docs": False,
+                "primary_type": "general"
+            }
+
+        # Count source types
+        academic_count = 0
+        news_count = 0
+        technical_count = 0
+        authority_sources = 0
+
+        # Keywords for detection
+        academic_keywords = [
+            "arxiv", "research", "study", "paper", "journal", "university",
+            "scholar", "academic", "thesis", "dissertation", "proceedings"
+        ]
+        news_keywords = [
+            "news", "article", "today", "breaking", "latest", "report",
+            "announcement", "press release", "statement"
+        ]
+        technical_keywords = [
+            "github", "documentation", "api", "code", "repository", "library",
+            "framework", "sdk", "tutorial", "guide", "python", "javascript",
+            "typescript", "java", "rust", "go", "example"
+        ]
+        official_domains = [
+            "github.com/official", "docs.microsoft.com", "cloud.google.com",
+            "aws.amazon.com", "docs.", ".org/docs", "developer."
+        ]
+
+        # Analyze each source
+        for source in sources:
+            url_lower = source.url.lower()
+            title_lower = source.title.lower()
+            snippet_lower = source.snippet.lower() if source.snippet else ""
+            combined = f"{title_lower} {snippet_lower} {url_lower}"
+
+            # Check for academic content
+            if any(kw in combined for kw in academic_keywords) or "arxiv" in url_lower:
+                academic_count += 1
+
+            # Check for news content
+            if any(kw in combined for kw in news_keywords) or source.source_type == "news":
+                news_count += 1
+
+            # Check for technical content
+            if any(kw in combined for kw in technical_keywords) or source.source_type == "academic":
+                technical_count += 1
+
+            # Check for official/authoritative sources
+            if any(domain in url_lower for domain in official_domains):
+                authority_sources += 1
+
+        total = len(sources)
+        academic_ratio = academic_count / total if total > 0 else 0.0
+        news_ratio = news_count / total if total > 0 else 0.0
+        technical_ratio = technical_count / total if total > 0 else 0.0
+        authority_score = (authority_sources + sum(1 for s in sources if s.relevance > 0.8)) / (total * 2)
+
+        # Determine primary type
+        ratios = {
+            "academic": academic_ratio,
+            "news": news_ratio,
+            "technical": technical_ratio,
+        }
+        primary_type = max(ratios, key=ratios.get) if max(ratios.values()) > 0.3 else "general"
+
+        # Check for code samples in content
+        has_code_samples = any("```" in (s.content or "") for s in sources)
+        has_official_docs = authority_score > 0.3
+
+        return {
+            "academic_ratio": academic_ratio,
+            "news_ratio": news_ratio,
+            "technical_ratio": technical_ratio,
+            "authority_score": min(authority_score, 1.0),
+            "has_code_samples": has_code_samples,
+            "has_official_docs": has_official_docs,
+            "primary_type": primary_type if max(ratios.values()) > 0.2 else "mixed"
+        }
+
+    def _build_content_type_instructions(self, composition: dict) -> str:
+        """Build content-type-specific instructions based on source composition.
+
+        Args:
+            composition: Dictionary from _analyze_source_composition()
+
+        Returns:
+            String with specialized instructions for the detected content type
+        """
+        instructions = ""
+
+        # Academic content instructions
+        if composition["academic_ratio"] > 0.4:
+            instructions += """
+ACADEMIC CONTENT INSTRUCTIONS:
+- Use formal, scholarly tone
+- Include author (year) format for citations: "Smith et al. (2024) [1]"
+- Explain research methodology when discussing findings
+- Distinguish between empirical findings and theoretical hypotheses
+- Include sample sizes and statistical significance when available
+- Reference datasets and experimental conditions
+- Note limitations of studies where mentioned
+- Use precise terminology (avoid overgeneralization)
+- Format: "The research shows [finding] (n=XXX, p<0.05) [citation]"
+"""
+
+        # News content instructions
+        if composition["news_ratio"] > 0.3:
+            instructions += """
+NEWS CONTENT INSTRUCTIONS:
+- Lead with most recent and significant developments (inverted pyramid)
+- Include exact dates and timestamps: "On November 12, 2024 [1]"
+- Distinguish breaking news from analysis/opinion pieces: "Breaking: ..." vs "Analysis: ..."
+- Mark updates to stories: "Updated: [date]"
+- Use chronological ordering for event narratives
+- Separate fact from opinion: "The company announced X [1]. Analysts believe Y [2]."
+- Include direct quotes from official sources when relevant
+- Note if information is developing/preliminary
+"""
+
+        # Technical content instructions
+        if composition["technical_ratio"] > 0.3 or composition["has_code_samples"]:
+            instructions += """
+TECHNICAL CONTENT INSTRUCTIONS:
+- Format code snippets with language specification:
+  ```python
+  code_here()
+  ```
+- Include version requirements: "Requires version X.Y+ or Python 3.8+"
+- List prerequisites and dependencies clearly
+- Number installation/setup steps: "1. Step, 2. Step..."
+- Include platform compatibility: "Works on: Linux, macOS, Windows"
+- Add warnings for breaking changes or deprecated features
+- Include error handling examples
+- Provide working examples with expected output
+- Note performance characteristics when relevant
+"""
+
+        # Official documentation instructions
+        if composition["has_official_docs"]:
+            instructions += """
+OFFICIAL DOCUMENTATION PRIORITY:
+- Prioritize official documentation sources [cite first]
+- Note: "According to official documentation [1], feature X..."
+- Defer to official specs for accurate information
+- Clearly mark community-provided information
+- Verify information against official sources when conflicting info exists
+"""
+
+        return instructions
+
+    def _get_format_instructions(self, composition: dict) -> str:
+        """Get formatting instructions based on source types.
+
+        Args:
+            composition: Dictionary from _analyze_source_composition()
+
+        Returns:
+            String with formatting guidelines
+        """
+        formatting = "\nFORMATTING GUIDELINES:"
+
+        # Academic formatting
+        if composition["academic_ratio"] > 0.4:
+            formatting += "\n- Use formal paragraph structure (avoid lists where possible)"
+            formatting += "\n- Include methodology, findings, implications sections"
+            formatting += "\n- Use 'research indicates', 'studies show', 'evidence suggests'"
+
+        # News formatting
+        if composition["news_ratio"] > 0.3:
+            formatting += "\n- Use headline style for major announcements"
+            formatting += "\n- Use bullet points for breaking updates"
+            formatting += "\n- Include date after each fact: 'X announced on [date] [cite]'"
+            formatting += "\n- Use subheadings for different newsworthy items"
+
+        # Technical formatting
+        if composition["technical_ratio"] > 0.3 or composition["has_code_samples"]:
+            formatting += "\n- Preserve code examples exactly as shown"
+            formatting += "\n- Use 'Note:', 'Warning:', 'Tip:' for important information"
+            formatting += "\n- Format file paths and commands in monospace: `path/to/file`"
+            formatting += "\n- Include version numbers with all references"
+
+        return formatting
+
+    # =========================================================================
+    # Phase 3 Task 7: Observability & Monitoring
+    # =========================================================================
+
+    def _log_response_metrics(
+        self,
+        query: str,
+        grounding_score: float | None,
+        hallucination_count: int | None,
+        total_claims: int,
+        content_type: str,
+        language: str,
+        citation_quality: float | None,
+        confidence_scores: dict[str, float] | None,
+        execution_time: float
+    ) -> None:
+        """Log comprehensive response metrics for observability.
+
+        Captures all Phase 1-3 metrics in structured format for monitoring,
+        debugging, and analytics.
+
+        Args:
+            query: User's query
+            grounding_score: Hallucination detection score (0-1)
+            hallucination_count: Number of unsupported claims
+            total_claims: Total number of extracted claims
+            content_type: Detected content type (academic/news/technical)
+            language: Detected language (en/es/fr/de)
+            citation_quality: Average citation quality score (0-1)
+            confidence_scores: Dict of confidence scores
+            execution_time: Total execution time (seconds)
+
+        Example:
+            >>> agent._log_response_metrics(
+            ...     query="What is AI?",
+            ...     grounding_score=0.87,
+            ...     hallucination_count=1,
+            ...     total_claims=10,
+            ...     content_type="technical",
+            ...     language="en",
+            ...     citation_quality=0.91,
+            ...     confidence_scores={"overall_confidence": 0.85},
+            ...     execution_time=2.5
+            ... )
+        """
+        # Structured logging of all metrics
+        logger.info("=" * 80)
+        logger.info("PHASE 3: COMPREHENSIVE RESPONSE METRICS")
+        logger.info("=" * 80)
+
+        # Query and content information
+        logger.info(f"Query: {query[:100]}")
+        logger.info(f"Content-Type: {content_type}")
+        logger.info(f"Language: {language}")
+        logger.info(f"Execution Time: {execution_time:.2f}s")
+
+        # Phase 1: Hallucination Detection Metrics
+        logger.info("\n--- PHASE 1: HALLUCINATION DETECTION ---")
+        logger.info(f"Grounding Score: {grounding_score:.2f}/1.0" if grounding_score is not None else "Grounding Score: N/A")
+        logger.info(f"Hallucination Count: {hallucination_count}/{total_claims}" if hallucination_count is not None else "Hallucination Count: N/A")
+        if hallucination_count is not None and total_claims > 0:
+            hallucination_rate = hallucination_count / total_claims
+            logger.info(f"Hallucination Rate: {hallucination_rate:.1%}")
+
+        # Phase 3 Task 1: Citation Quality Metrics
+        logger.info("\n--- PHASE 3 TASK 1: CITATION QUALITY ---")
+        logger.info(f"Average Citation Quality: {citation_quality:.2f}/1.0" if citation_quality is not None else "Average Citation Quality: N/A")
+
+        # Phase 3 Task 5: Confidence Scoring Metrics
+        logger.info("\n--- PHASE 3 TASK 5: CONFIDENCE SCORING ---")
+        if confidence_scores:
+            for score_type, score_value in confidence_scores.items():
+                readable_name = score_type.replace('_', ' ').title()
+                logger.info(f"{readable_name}: {score_value:.2f}/1.0")
+        else:
+            logger.info("Confidence Scores: N/A")
+
+        logger.info("=" * 80)
+
+    # =========================================================================
+    # Phase 3 Task 5: Response Confidence Scoring
+    # =========================================================================
+
+    def _calculate_response_confidence(
+        self,
+        grounding_score: float | None,
+        content_type: str,
+        hallucination_count: int | None,
+        total_claims: int
+    ) -> dict[str, float]:
+        """Calculate response confidence scores with per-type metrics.
+
+        Confidence calculation:
+        - Overall: (grounding × 0.5) + (type_authority × 0.3) + (anti_hallucination × 0.2)
+        - Type-specific scores adjust for content category strengths
+
+        Args:
+            grounding_score: Overall grounding/hallucination detection score (0-1)
+            content_type: Detected content type (academic/news/technical)
+            hallucination_count: Number of unsupported claims
+            total_claims: Total number of extracted claims
+
+        Returns:
+            Dictionary with confidence scores:
+            - overall_confidence: 0-1 overall confidence
+            - academic_confidence: 0-1 if academic content
+            - news_freshness_confidence: 0-1 if news content
+            - technical_accuracy_confidence: 0-1 if technical content
+
+        Example:
+            >>> confidence = agent._calculate_response_confidence(0.85, "technical", 1, 10)
+            >>> print(f"Overall: {confidence['overall_confidence']:.2f}")
+            Overall: 0.83
+        """
+        # Handle missing values
+        if grounding_score is None:
+            grounding_score = 0.7  # Default neutral score
+
+        # Calculate hallucination rate
+        hallucination_rate = 0.0
+        if hallucination_count is not None and total_claims > 0:
+            hallucination_rate = hallucination_count / total_claims
+
+        # Authority score (placeholder - could be enhanced with citation authority)
+        authority_score = 0.85  # Default authority assumption
+
+        # Anti-hallucination component (1 - hallucination_rate)
+        anti_hallucination_score = 1.0 - min(hallucination_rate, 1.0)
+
+        # Overall confidence calculation
+        overall_confidence = (
+            grounding_score * 0.5 +
+            authority_score * 0.3 +
+            anti_hallucination_score * 0.2
+        )
+        overall_confidence = min(overall_confidence, 1.0)
+
+        confidence_dict = {
+            "overall_confidence": overall_confidence
+        }
+
+        # Type-specific confidence scores
+        if content_type == "academic":
+            # Academic: Higher confidence from grounding + formality
+            academic_confidence = min(grounding_score * 1.1, 1.0)
+            confidence_dict["academic_confidence"] = academic_confidence
+
+        elif content_type == "news":
+            # News: Freshness matters more than grounding
+            # Assume recent sources have better freshness
+            news_freshness = overall_confidence * 0.95  # Slight discount for recency risk
+            confidence_dict["news_freshness_confidence"] = news_freshness
+
+        elif content_type == "technical":
+            # Technical: Accuracy from grounding + authority
+            technical_accuracy = (grounding_score * 0.7 + authority_score * 0.3)
+            confidence_dict["technical_accuracy_confidence"] = min(technical_accuracy, 1.0)
+
+        return confidence_dict
+
+    # =========================================================================
+    # Phase 3: Language-Specific Adaptation Methods
+    # =========================================================================
+
+    def _build_language_specific_instructions(self, language: str) -> str:
+        """Build language-specific LLM instructions for adapted responses.
+
+        Supports: English, Spanish, French, German
+
+        Each language has specific conventions for:
+        - Citation formats
+        - Number and date formatting
+        - Formal tone and voice
+        - Sentence structure preferences
+
+        Args:
+            language: ISO 639-1 language code (en, es, fr, de)
+
+        Returns:
+            Language-adapted instruction string for LLM prompt injection
+
+        Example:
+            >>> instructions = agent._build_language_specific_instructions("es")
+            >>> "español" in instructions.lower()
+            True
+        """
+        language_instructions = {
+            "en": """ENGLISH-SPECIFIC WRITING CONVENTIONS:
+- Use active voice primarily, passive voice for emphasis
+- Citation format: Author (Year) [reference]
+- Numbers: Use commas for thousands (e.g., 1,000; 1.5 million)
+- Dates: Month Day, Year format (e.g., November 12, 2024)
+- Sentence structure: Clear topic sentences followed by supporting details
+- Contractions acceptable in semi-formal writing
+- Use specific examples and concrete evidence""",
+
+            "es": """CONVENCIONES DE ESCRITURA EN ESPAOL:
+- Usar voz activa preferentemente
+- Formato de citas: Autor (Ao) [referencia]
+- Nmeros: Usar puntos para miles (p. ej., 1.000; 1,5 millones)
+- Fechas: Formato Da de Mes de Ao (p. ej., 12 de noviembre de 2024)
+- Estructura: Oraciones temticas claras con detalles de apoyo
+- Evitar construcciones pasivas cuando sea posible
+- Usar ejemplos especficos de fuentes confiables""",
+
+            "fr": """CONVENTIONS D'CRITURE EN FRANAIS:
+- Utiliser la voix active de prfrence
+- Format de citation: Auteur (Anne) [rfrence]
+- Nombres: Utiliser des espaces pour les milliers (p. ex., 1 000 ; 1,5 million)
+- Dates: Format Jour Mois Anne (p. ex., 12 novembre 2024)
+- Structure: Phrases thmatiques claires avec dtails de soutien
+- Viter les constructions passives quand possible
+- Inclure des exemples spcifiques de sources fiables""",
+
+            "de": """DEUTSCHSPRACHIGE SCHREIBKONVENTIONEN:
+- Aktive Stimme bevorzugt verwenden
+- Zitierformat: Autor (Jahr) [Referenz]
+- Zahlen: Punkte fr Tausender (z. B., 1.000; 1,5 Millionen)
+- Daten: Datumsformat Tag. Monat Jahr (z. B., 12. November 2024)
+- Struktur: Klare Themenstze mit untersttzenden Details
+- Passivkonstruktionen vermeiden, wenn mglich
+- Spezifische Beispiele aus zuverlssigen Quellen einbinden"""
+        }
+
+        return language_instructions.get(language, language_instructions["en"])
+
+    # =========================================================================
+    # Response Templates for Different Query Types
+    # =========================================================================
+
+    def _get_response_template(self, sub_queries: list[SubQuery], query: str) -> str:
+        """Select appropriate response template based on query intent and keywords.
+
+        Args:
+            sub_queries: List of decomposed sub-queries with intent
+            query: Original query text
+
+        Returns:
+            Template structure string to guide answer generation
+        """
+        # Determine primary intent from first sub-query
+        primary_intent = sub_queries[0].intent if sub_queries else "factual"
+
+        # Check for comparative keywords (override intent)
+        comparative_keywords = ["vs", "versus", "compare", "comparison", "difference between", "similar to", "unlike"]
+        if any(kw in query.lower() for kw in comparative_keywords):
+            return self._get_comparative_template()
+
+        # Check for analytical keywords (override intent)
+        analytical_keywords = ["analyze", "trends", "outlook", "implications", "impact", "effect", "causes"]
+        if any(kw in query.lower() for kw in analytical_keywords):
+            return self._get_analytical_template()
+
+        # Use intent-based templates
+        if primary_intent == "definition":
+            return self._get_definition_template()
+        elif primary_intent == "opinion":
+            return self._get_analytical_template()
+        else:  # factual
+            return self._get_factual_template()
+
+    def _get_definition_template(self) -> str:
+        """Template for definition queries (what is X?)."""
+        return """
+RESPONSE STRUCTURE FOR DEFINITION:
+1. **Core Definition** - Start with a clear, concise definition
+2. **Key Characteristics** - List 3-5 important features or properties
+3. **How It Works** - Explain the mechanism or process if applicable
+4. **Context & Background** - Provide historical context or origin
+5. **Related Concepts** - Mention similar or related terms
+6. **Practical Applications** - Show how it's used in practice
+
+FORMATTING:
+- Use clear section headers
+- Number key characteristics and applications
+- Include specific examples with citations
+- Keep definition in opening paragraph to ~100 words
+"""
+
+    def _get_factual_template(self) -> str:
+        """Template for factual queries (who, what, when, where)."""
+        return """
+RESPONSE STRUCTURE FOR FACTUAL INFORMATION:
+1. **Overview** - Brief summary of the topic (1-2 sentences)
+2. **Key Facts** - Organize by category or chronologically
+   - Group related facts together
+   - Include: Who, What, When, Where, Why, How
+   - Use specific numbers, dates, percentages
+3. **Timeline** (if temporal) - List major events/milestones chronologically
+4. **Current Status** (if recent query) - Latest information as of today
+5. **Significance** - Why these facts matter
+
+FORMATTING:
+- Use numbered lists for facts organized by category
+- Format dates as "Month DD, YYYY" for clarity
+- Include specific metrics and percentages
+- Each bullet point should be a complete thought with details
+"""
+
+    def _get_comparative_template(self) -> str:
+        """Template for comparative queries (X vs Y)."""
+        return """
+RESPONSE STRUCTURE FOR COMPARATIVE ANALYSIS:
+1. **Introduction** - State what's being compared (A and B)
+2. **Similarities** - What A and B have in common
+   - List 2-4 key similarities with explanations
+3. **Key Differences** - Create a comparison breakdown:
+   | Aspect | Option A | Option B |
+   |--------|----------|----------|
+   | Feature 1 | Details | Details |
+   | Feature 2 | Details | Details |
+4. **Strengths & Weaknesses** - For each option
+5. **Use Case Recommendations** - When to choose A vs B
+   - Scenario 1: Choose A because...
+   - Scenario 2: Choose B because...
+
+FORMATTING:
+- Use consistent comparison structure
+- Include a comparison table for easy reference
+- Highlight key differentiators in bold
+- Provide real-world scenarios for each option
+"""
+
+    def _get_analytical_template(self) -> str:
+        """Template for analytical queries (trends, impact, analysis)."""
+        return """
+RESPONSE STRUCTURE FOR ANALYTICAL CONTENT:
+1. **Background & Context** - Set up the topic
+   - What is the current situation?
+   - Why is this important?
+2. **Landscape Analysis** - Describe the current state
+   - Key players or factors involved
+   - Market conditions or context
+3. **Key Trends & Patterns** - Main observations (3-5 trends)
+   - Trend 1: Description with evidence and citations
+   - Trend 2: Description with evidence and citations
+4. **Underlying Causes** - Why these trends exist
+5. **Implications & Outlook** - What this means
+   - Short-term impacts
+   - Long-term outlook
+   - Potential challenges or opportunities
+6. **Conclusion** - Synthesis and key takeaways
+
+FORMATTING:
+- Use evidence-based language ("data shows", "research indicates")
+- Include specific examples with citations
+- Distinguish facts from analysis clearly
+- Use forward-looking language for implications
+"""
+
 
     async def generate_answer(
-        self, query: str, sources: list[SearchSource]
-    ) -> str:
+        self, query: str, sources: list[SearchSource], sub_queries: list[SubQuery] | None = None
+    ) -> tuple[str, float | None, int | None]:
         """Generate AI answer based on search sources.
 
         Args:
             query: User's original query
             sources: Retrieved and ranked sources
+            sub_queries: Optional sub-queries for intent-based templating
 
         Returns:
-            AI-generated answer synthesizing the sources
+            Tuple of (answer, grounding_score, hallucination_count)
+            - answer: AI-generated answer synthesizing the sources
+            - grounding_score: Hallucination detection score (0-1)
+            - hallucination_count: Number of unsupported claims
 
         Example:
-            >>> answer = await agent.generate_answer("What are AI agents?", sources)
+            >>> answer, grounding, hallucinations = await agent.generate_answer("What are AI agents?", sources)
             >>> assert len(answer) > 100
         """
         if not sources:
-            return "I couldn't find enough information to answer your question. Please try rephrasing your query."
+            return ("I couldn't find enough information to answer your question. Please try rephrasing your query.", None, None)
 
         # Build context from sources
         context_parts = []
@@ -1111,7 +1687,35 @@ Respond with valid JSON only."""
         logger.info(f"📥 Query: '{query}'")
         logger.info(f"📥 Sources: {len(sources)} total, using top 7")
         logger.info(f"📥 Context length: {len(context)} chars")
-        
+
+        # Get response template based on query intent
+        response_template = ""
+        if sub_queries:
+            response_template = self._get_response_template(sub_queries, query)
+            logger.info(f"📋 Using query-specific response template")
+
+        # ========== PHASE 2: CONTENT-TYPE ANALYSIS ==========
+        # Analyze source composition to adapt response style
+        composition = self._analyze_source_composition(sources[:7])
+        logger.info(f"📊 Source composition: {composition['primary_type']} (academic={composition['academic_ratio']:.0%}, news={composition['news_ratio']:.0%}, technical={composition['technical_ratio']:.0%})")
+
+        # Build content-type-specific instructions
+        content_type_instructions = self._build_content_type_instructions(composition)
+        format_instructions = self._get_format_instructions(composition)
+
+        if content_type_instructions:
+            logger.info(f"📝 Content-type instructions: {len(content_type_instructions)} chars")
+        if format_instructions:
+            logger.info(f"📝 Format instructions: {len(format_instructions)} chars")
+
+        # ========== PHASE 3 TASK 2: MULTI-LINGUAL ADAPTATION ==========
+        # Detect language and build language-specific instructions
+        detected_language = sub_queries[0].language if sub_queries else "en"
+        language_instructions = self._build_language_specific_instructions(detected_language)
+        language_name = get_language_name(detected_language)
+        logger.info(f"🌐 Detected language: {language_name} ({detected_language})")
+        logger.info(f"📝 Language-specific instructions: {len(language_instructions)} chars")
+
         # Build prompt for answer generation
         prompt = f"""You are a helpful search assistant. Answer the user's question by extracting and explaining SPECIFIC information from the search results.
 
@@ -1175,6 +1779,42 @@ MANDATORY REQUIREMENTS:
 
 8. Add context from sources for every claim - "what", "why", "how", "when"
 
+MULTI-SOURCE SYNTHESIS STRATEGY:
+
+1. TRIANGULATION - When multiple sources discuss the same topic:
+   ✓ "According to both Microsoft [1] and industry analysts [2][3], Azure revenue grew 31% year-over-year"
+   ✗ "Azure revenue grew [1]"
+
+2. CONFLICT RESOLUTION - When sources disagree:
+   ✓ "Microsoft reports 31% growth [1], while independent analysis suggests 28-33% [2],
+      with the discrepancy likely due to different accounting methods [2]"
+   ✗ Ignoring contradictions or cherry-picking one source
+
+3. CHRONOLOGICAL SYNTHESIS - For evolving topics:
+   ✓ "Initially announced in March 2024 [1], the feature was enhanced in June [2] and
+      reached general availability in October 2024 [3]"
+   ✗ Presenting timeline out of order
+
+4. COMPLEMENTARY INTEGRATION - Combining different aspects:
+   ✓ "Azure AI Foundry provides the development platform [1], while Azure AI Search
+      handles retrieval [2], and Azure OpenAI delivers the language models [3],
+      creating an integrated RAG solution [1][2][3]"
+   ✗ Listing features separately without integration
+
+5. PRIMARY vs SECONDARY SOURCES - Distinguish authority:
+   ✓ "Microsoft's official documentation states [1], which is corroborated by third-party
+      testing [2][3]"
+   ✗ Treating all sources with equal weight
+
+{response_template}
+
+CONTENT-TYPE ADAPTATION:
+Based on the sources provided, adapt your response style accordingly:
+{content_type_instructions}{format_instructions}
+
+LANGUAGE-SPECIFIC CONVENTIONS:
+{language_instructions}
+
 Write a detailed answer with full explanations for everything:"""
 
         # ============ CRITICAL LOG: LLM CALL FOR ANSWER ============
@@ -1212,24 +1852,119 @@ Write a detailed answer with full explanations for everything:"""
                 answer = response["content"].strip()
                 word_count = len(answer.split())
                 logger.info(f"📥 Answer length: {len(answer)} chars, {word_count} words")
-                
+
                 # ============ FULL RESPONSE LOGGING ============
                 logger.info("=" * 80)
                 logger.info("📥 FULL LLM OUTPUT (SEARCH - ANSWER)")
                 logger.info("=" * 80)
                 logger.info(answer)
                 logger.info("=" * 80)
-                
+
+                # ========== TASK 1: HALLUCINATION DETECTION ==========
+                grounding_score = None
+                hallucination_count = None
+
+                try:
+                    # Convert sources to citations for grounding check
+                    citations = [
+                        Citation(
+                            source_id=str(i),
+                            title=source.title,
+                            url=source.url,
+                            excerpt=source.content if source.content else source.snippet,
+                            relevance=source.relevance
+                        )
+                        for i, source in enumerate(sources[:7], 1)
+                    ]
+
+                    # Initialize claim grounder and run grounding analysis
+                    claim_grounder = ClaimGrounder(
+                        embedding_service=self.deps.embedding_service,
+                        grounding_threshold=0.6,
+                        similarity_threshold=0.7
+                    )
+
+                    grounding_result = await claim_grounder.ground_synthesis(answer, citations)
+                    grounding_score = grounding_result.overall_grounding
+                    hallucination_count = grounding_result.hallucination_count
+
+                    logger.info(f"✅ HALLUCINATION DETECTION COMPLETE")
+                    logger.info(f"📊 Grounding Score: {grounding_score:.2f}/1.0")
+                    logger.info(f"📊 Hallucination Count: {hallucination_count}/{len(grounding_result.claims)} claims")
+
+                    if grounding_result.hallucination_count > 0:
+                        hallucination_rate = grounding_result.hallucination_count / len(grounding_result.claims)
+                        if hallucination_rate > 0.2:
+                            logger.warning(f"⚠️ High hallucination rate detected: {hallucination_rate:.1%}")
+                        else:
+                            logger.info(f"✓ Hallucination rate within acceptable range: {hallucination_rate:.1%}")
+
+                    # ========== PHASE 3 TASK 1: CITATION QUALITY VERIFICATION ==========
+                    # Grade citation authority levels
+                    for citation in citations:
+                        citation.authority_level = claim_grounder._grade_citation_authority(citation)
+
+                    logger.info(f"📊 Citation Authority Grading Complete")
+                    authority_breakdown = {}
+                    for citation in citations:
+                        authority_breakdown[citation.authority_level] = authority_breakdown.get(citation.authority_level, 0) + 1
+                    logger.info(f"📊 Authority Distribution: {authority_breakdown}")
+
+                    # Calculate citation quality for each claim
+                    if grounding_result.claims:
+                        for claim in grounding_result.claims:
+                            claim.citation_quality_score = await claim_grounder.calculate_citation_quality(claim, citations)
+                            # Set best citation authority level
+                            if claim.supporting_sources:
+                                best_citation = next((c for c in citations if c.source_id == claim.supporting_sources[0]), None)
+                                if best_citation:
+                                    claim.citation_authority_level = best_citation.authority_level
+
+                        logger.info(f"✅ CITATION QUALITY VERIFICATION COMPLETE")
+                        avg_quality = sum(c.citation_quality_score for c in grounding_result.claims) / len(grounding_result.claims) if grounding_result.claims else 0
+                        logger.info(f"📊 Average Citation Quality: {avg_quality:.2f}/1.0")
+
+                        # Reorder claims by citation quality
+                        reordered_claims = claim_grounder._reorder_claims_by_citation_quality(grounding_result.claims)
+                        if reordered_claims != grounding_result.claims:
+                            logger.info(f"📊 Reordered {len(reordered_claims)} claims by citation quality")
+                            best_citation_authority = reordered_claims[0].citation_authority_level if reordered_claims else "unknown"
+                            logger.info(f"📊 Best claim authority: {best_citation_authority}")
+
+                    # ========== PHASE 3 TASK 5: CONFIDENCE SCORING ==========
+                    # Calculate response confidence with per-type metrics
+                    total_claims = len(grounding_result.claims)
+                    confidence_scores = self._calculate_response_confidence(
+                        grounding_score=grounding_score,
+                        content_type=composition["primary_type"],
+                        hallucination_count=hallucination_count,
+                        total_claims=total_claims
+                    )
+
+                    logger.info(f"✅ CONFIDENCE SCORING COMPLETE")
+                    logger.info(f"📊 Overall Confidence: {confidence_scores['overall_confidence']:.2f}/1.0")
+
+                    # Log type-specific confidence
+                    for score_type, score_value in confidence_scores.items():
+                        if score_type != "overall_confidence":
+                            logger.info(f"📊 {score_type.replace('_', ' ').title()}: {score_value:.2f}/1.0")
+
+                except Exception as e:
+                    logger.warning(f"⚠️ Hallucination detection failed: {e}")
+                    logger.info("Continuing with answer generation (hallucination metrics unavailable)")
+
                 logger.info(f"✅ ANSWER GENERATION COMPLETE")
-                return answer
+                return (answer, grounding_score, hallucination_count)
             else:
                 logger.warning("⚠️ LLM response format unexpected, using fallback")
                 logger.warning(f"Response type: {type(response)}, keys: {response.keys() if isinstance(response, dict) else 'N/A'}")
-                return self._generate_fallback_answer(query, sources)
+                fallback_answer = self._generate_fallback_answer(query, sources)
+                return (fallback_answer, None, None)
 
         except Exception as e:
             logger.error(f"❌ Error generating answer: {e}")
-            return self._generate_fallback_answer(query, sources)
+            fallback_answer = self._generate_fallback_answer(query, sources)
+            return (fallback_answer, None, None)
 
     def _generate_fallback_answer(
         self, query: str, sources: list[SearchSource]
@@ -1392,7 +2127,7 @@ Write a detailed answer with full explanations for everything:"""
             ranked_sources = await self.rank_results(validated_sources, query)
 
             # 5. Generate answer from sources
-            answer = await self.generate_answer(query, ranked_sources)
+            answer, grounding_score, hallucination_count = await self.generate_answer(query, ranked_sources, sub_queries)
 
             execution_time = time.time() - start_time
 
@@ -1403,6 +2138,8 @@ Write a detailed answer with full explanations for everything:"""
                 sources=ranked_sources,
                 execution_time=execution_time,
                 confidence=0.8,  # Default confidence
+                grounding_score=grounding_score,
+                hallucination_count=hallucination_count,
             )
 
             # 7. Validate output
