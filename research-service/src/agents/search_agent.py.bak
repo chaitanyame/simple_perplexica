@@ -214,8 +214,8 @@ class SearchAgentDeps:
     llm_client: OpenRouterClient
     tracer: LangfuseTracer
     db: AsyncSession
-    # Accept either raw httpx.AsyncClient or SearxNGClient abstraction, or None for serperdev-only mode
-    searxng_client: Any | None
+    # Accept either raw httpx.AsyncClient or SearxNGClient abstraction
+    searxng_client: Any
     serperdev_api_key: str
     crawl_client: Crawl4AIClient
     document_processor: DocklingProcessor
@@ -579,14 +579,6 @@ Respond with valid JSON only."""
                     time_range = None
                 else:
                     time_range = time_range_map.get(sub_query.temporal_scope)
-                
-                # AUTO-DETECT NEWS QUERIES: If query contains "news" and no temporal scope,
-                # default to recent news (past week) to avoid old/irrelevant results
-                if time_range is None and sub_query.temporal_scope == "any":
-                    if any(keyword in sub_query.query.lower() for keyword in ["news", "latest", "current", "recent", "today", "update"]):
-                        time_range = "week"  # Default to past week for news queries
-                        logger.info(f"📰 Auto-detected news query, filtering to past week", query=sub_query.query)
-                
                 # First attempt
                 categories = getattr(settings, "SEARXNG_DEFAULT_CATEGORIES", ["general"])
                 engines = getattr(settings, "SEARXNG_DEFAULT_ENGINES", []) or None
@@ -849,7 +841,53 @@ Respond with valid JSON only."""
             
         return False
     
-
+    def _get_article_css_selector(self, url: str) -> str | None:
+        """Get CSS selector for main article content based on URL domain.
+        
+        Args:
+            url: URL being crawled
+            
+        Returns:
+            CSS selector string or None for default extraction
+        """
+        # Common article content selectors by domain
+        domain_selectors = {
+            'bbc.com': 'article, [data-component="text-block"]',
+            'cnn.com': 'article, .article__content',
+            'nytimes.com': 'article, .StoryBodyCompanionColumn',
+            'reuters.com': 'article, [data-testid="ArticleBody"]',
+            'theguardian.com': 'article, .article-body-commercial-selector',
+            'forbes.com': 'article, .article-body',
+            'techcrunch.com': 'article, .article-content',
+            'wired.com': 'article, .body__inner-container',
+            'ndtv.com': 'article, .sp-cn, #ins_storybody',
+            'thehindu.com': 'article, .articlebodycontent',
+            'indianexpress.com': 'article, .story_details',
+            'hindustantimes.com': 'article, .detail',
+            'timesofindia.com': 'article, .article_content',
+            'theprin.com': 'article, .entry-content',
+            'cnbctv18.com': 'article, .article-content',
+            'foxnews.com': 'article, .article-body',
+            'apnews.com': 'article, [data-key="article"]',
+        }
+        
+        # Generic fallback for common article tags
+        generic_selector = 'article, main, [role="main"], .article, .post-content, .entry-content'
+        
+        # Extract domain from URL
+        from urllib.parse import urlparse
+        domain = urlparse(url).netloc.lower()
+        domain = domain.replace('www.', '')
+        
+        # Check for specific domain matches
+        for key, selector in domain_selectors.items():
+            if key in domain:
+                logger.info(f"Using domain-specific selector for {domain}: {selector}")
+                return selector
+        
+        # Use generic selector for unknown domains
+        logger.info(f"Using generic article selector for {domain}")
+        return generic_selector
 
     async def _crawl_single_url(self, source: SearchSource) -> SearchSource:
         """Crawl a single URL and update source with content.
@@ -1308,16 +1346,12 @@ Write a detailed answer with full explanations for everything:"""
         
         config = search_mode.config
         
-        # Auto-enable recency boost for news/current event queries
-        is_news_query = any(keyword in query.lower() for keyword in ["news", "latest", "current", "recent", "today", "update", "breaking"])
-        
         logger.info(
             "Starting search with mode",
             query=query,
             mode=search_mode.value,
             max_sources=config.max_sources,
             timeout=config.timeout,
-            news_query=is_news_query,
         )
 
         start_time = time.time()
@@ -1326,15 +1360,9 @@ Write a detailed answer with full explanations for everything:"""
         original_max_sources = self.max_sources
         original_enable_reranking = self.deps.enable_reranking
         original_max_crawl_urls = self.deps.max_crawl_urls
-        original_enable_recency_boost = self.deps.enable_recency_boost
         
         self.max_sources = config.max_sources
         self.deps.enable_reranking = config.enable_reranking
-        
-        # Auto-enable recency boost for news queries to rank recent content higher
-        if is_news_query and not self.deps.enable_recency_boost:
-            self.deps.enable_recency_boost = True
-            logger.info("📰 Auto-enabled recency boost for news query")
         
         # Adjust max_crawl_urls based on mode for better performance
         # BALANCED: crawl top 5 (half of sources) for speed
@@ -1422,4 +1450,3 @@ Write a detailed answer with full explanations for everything:"""
             self.max_sources = original_max_sources
             self.deps.enable_reranking = original_enable_reranking
             self.deps.max_crawl_urls = original_max_crawl_urls
-            self.deps.enable_recency_boost = original_enable_recency_boost

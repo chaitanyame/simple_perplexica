@@ -124,12 +124,17 @@ class Crawl4AIClient:
                 verbose=False,
             )
 
-            # Create crawler run config
+            # Create crawler run config with intelligent content extraction
             run_config = CrawlerRunConfig(
                 cache_mode=CacheMode.BYPASS,
                 css_selector=css_selector,
                 wait_for=wait_for,
-                word_count_threshold=word_count_threshold,
+                word_count_threshold=word_count_threshold or 200,  # Filter short nav blocks
+                # Crawl4AI's built-in intelligence to filter navigation/menus
+                excluded_tags=['nav', 'header', 'footer', 'aside', 'form'],  # Remove navigation elements
+                remove_forms=True,  # Remove forms (search boxes, etc.)
+                remove_overlay_elements=True,  # Remove popups/overlays
+                magic=True,  # Enable Crawl4AI's intelligent content extraction
             )
 
             # Crawl with context manager

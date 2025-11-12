@@ -33,6 +33,30 @@ def main():
         st.header("⚙️ Settings")
         mode = st.radio("Mode", ["Search", "Research"], index=0)
 
+        st.subheader("🔍 Search Engine")
+        search_engine = st.radio(
+            "Select Search Backend",
+            options=["🌐 SearXNG (Primary)", "🚀 SerperDev (Alternative)", "🔄 Auto (SearXNG + SerperDev Fallback)"],
+            index=2,  # Default to Auto
+            help="Choose which search engine to use for fetching results",
+        )
+        
+        # Extract search engine preference
+        engine_map = {
+            "🌐 SearXNG (Primary)": "searxng",
+            "🚀 SerperDev (Alternative)": "serperdev",
+            "🔄 Auto (SearXNG + SerperDev Fallback)": "auto",
+        }
+        selected_engine = engine_map[search_engine]
+        
+        # Display engine info
+        if selected_engine == "searxng":
+            st.caption("✅ Open-source metasearch engine\n🌍 Multiple search engines aggregated\n🔒 Privacy-focused")
+        elif selected_engine == "serperdev":
+            st.caption("✅ Google search API\n⚡ Fast and reliable\n📊 Rich metadata")
+        else:
+            st.caption("✅ Best of both worlds\n🔄 Automatic fallback\n🛡️ Redundancy")
+
         st.subheader("Query Optimization")
         search_mode = st.radio(
             "Search Mode",
@@ -111,15 +135,15 @@ def main():
 
     # Main content
     if mode == "Search":
-        render_search_mode(max_sources, timeout, model, selected_mode)
+        render_search_mode(max_sources, timeout, model, selected_mode, selected_engine)
     else:
-        render_research_mode(max_iterations, timeout, model, selected_mode)
+        render_research_mode(max_iterations, timeout, model, selected_mode, selected_engine)
 
 
-def render_search_mode(max_sources: int, timeout: int, model: str, mode: str):
+def render_search_mode(max_sources: int, timeout: int, model: str, mode: str, search_engine: str):
     """Render search interface."""
     st.header("🔎 Fast Search")
-    st.write("Quick web search with multi-source aggregation")
+    st.write(f"Quick web search with multi-source aggregation (via {search_engine.upper()})")
 
     query = st.text_input(
         "Enter your search query",
@@ -152,6 +176,7 @@ def render_search_mode(max_sources: int, timeout: int, model: str, mode: str):
                     "query": query,
                     "mode": mode,
                     "model": model,
+                    "search_engine": search_engine,  # Add search engine preference
                 }
                 # Only include overrides if user changed them from mode defaults
                 if max_sources != default_sources:
@@ -241,10 +266,10 @@ def render_search_result(data: dict):
         )
 
 
-def render_research_mode(max_iterations: int, timeout: int, model: str, mode: str):
+def render_research_mode(max_iterations: int, timeout: int, model: str, mode: str, search_engine: str):
     """Render research interface."""
     st.header("🔬 Deep Research")
-    st.write("Comprehensive research with iterative synthesis")
+    st.write(f"Comprehensive research with iterative synthesis (via {search_engine.upper()})")
 
     query = st.text_area(
         "Enter your research question",
@@ -272,6 +297,7 @@ def render_research_mode(max_iterations: int, timeout: int, model: str, mode: st
                         "timeout": timeout,
                         "mode": mode,
                         "model": model,
+                        "search_engine": search_engine,  # Add search engine preference
                     },
                     timeout=timeout + 10,
                 )

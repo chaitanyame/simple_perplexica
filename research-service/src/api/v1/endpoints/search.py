@@ -49,6 +49,7 @@ async def create_search_agent(
     enable_diversity: bool = False,
     enable_recency: bool = False,
     enable_query_aware: bool = False,
+    search_engine: str = "auto",
 ) -> SearchAgent:
     """Create SearchAgent with dependencies.
 
@@ -62,6 +63,7 @@ async def create_search_agent(
         enable_diversity: Enable diversity penalty for deduplication
         enable_recency: Enable recency boost for temporal queries
         enable_query_aware: Enable query-aware score adaptations
+        search_engine: Search engine backend ('searxng', 'serperdev', 'auto')
 
     Returns:
         Configured SearchAgent instance
@@ -79,11 +81,31 @@ async def create_search_agent(
         host=settings.LANGFUSE_HOST,
     )
 
-    # Initialize SearxNG client (wrapper)
-    searxng_client = SearxNGClient(
-        base_url=settings.SEARXNG_BASE_URL,
-        timeout=timeout,
-    )
+    # Initialize SearxNG client (wrapper) - only if needed
+    if search_engine in ["searxng", "auto"]:
+        searxng_client = SearxNGClient(
+            base_url=settings.SEARXNG_BASE_URL,
+            timeout=timeout,
+        )
+    else:
+        # For serperdev-only mode, create a minimal client that will be bypassed
+        searxng_client = None  # SearchAgent will handle None gracefully
+
+    # Adjust SerperDev key based on search engine preference
+    if search_engine == "searxng":
+        # Disable SerperDev fallback when using SearXNG only
+        serperdev_key = ""
+    elif search_engine == "serperdev":
+        # Use SerperDev as primary (SearchAgent will handle this)
+        serperdev_key = settings.SERPER_API_KEY or ""
+        if not serperdev_key:
+            raise HTTPException(
+                status_code=400,
+                detail="SerperDev API key not configured. Cannot use 'serperdev' mode."
+            )
+    else:  # auto
+        # Use both: SearXNG primary, SerperDev fallback
+        serperdev_key = settings.SERPER_API_KEY or ""
 
     # Initialize Crawl4AI client for content extraction
     crawl_client = Crawl4AIClient(
@@ -114,7 +136,7 @@ async def create_search_agent(
         tracer=tracer,
         db=db,
         searxng_client=searxng_client,
-        serperdev_api_key=settings.SERPER_API_KEY or "",
+        serperdev_api_key=serperdev_key,
         crawl_client=crawl_client,
         document_processor=document_processor,
         embedding_service=embedding_service,
@@ -267,6 +289,7 @@ async def search(
             enable_diversity=request.enable_diversity,
             enable_recency=request.enable_recency,
             enable_query_aware=request.enable_query_aware,
+            search_engine=request.search_engine or "auto",
         )
 
         # Execute search with timeout and mode

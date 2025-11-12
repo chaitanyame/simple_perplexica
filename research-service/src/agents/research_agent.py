@@ -399,6 +399,26 @@ MANDATORY Rules:
 - 600+ words minimum with full explanations
 - Add context: what, why, how, when for each point
 
+⚠️ CRITICAL - ABSOLUTELY FORBIDDEN PATTERNS:
+
+DO NOT WRITE ANY OF THESE:
+- ✗ "ThePrint provides coverage of..." / "ThePrint is providing analyses..."
+- ✗ "CNBC TV18 reports on business news from India..."
+- ✗ "Fox News includes categories for..."
+- ✗ "Reuters offers dedicated section for..."
+- ✗ "Website X covers topics like A, B, C..."
+- ✗ "Platform Y functions as digital platform for..."
+- ✗ "Source Z categorizes news into sections..."
+
+IF SOURCES ONLY CONTAIN WEBSITE DESCRIPTIONS/NAVIGATION:
+→ SKIP THEM! Write: "Sources contain insufficient specific news content"
+
+ONLY EXTRACT ACTUAL EVENTS, FACTS, ANNOUNCEMENTS:
+- ✓ RIGHT: "India's economy grew 7.8% in Q2 2024 [1]"
+- ✓ RIGHT: "New trade agreement signed between India-US on Nov 5, 2024 [2]"
+- ✓ RIGHT: "Delhi pollution levels reached 450 AQI on Nov 10, 2024 [3]"
+- ✓ RIGHT: "Rupee hit 83.5 against dollar, lowest in 6 months [4]"
+
 CRITICAL - TEMPORAL ACCURACY:
 - PRIORITIZE recent information over old information
 - ALWAYS include dates when available (e.g., "announced in November 2024", "as of 2025")
@@ -455,6 +475,24 @@ EXTRACT AND EXPLAIN ALL INFORMATION:
 
 Write detailed synthesis with descriptions for every item AND their dates:"""
 
+        # Use Gemini 2.5 Flash Lite for final synthesis generation
+        import structlog
+        logger = structlog.get_logger(__name__)
+        original_model = self.llm_client.model
+        self.llm_client.model = "google/gemini-2.5-flash-lite"
+        logger.info("🤖 Using Gemini 2.5 Flash Lite for final synthesis generation")
+        
+        # ============ FULL PROMPT LOGGING ============
+        logger.info("=" * 80)
+        logger.info("📋 FULL LLM INPUT (RESEARCH - SYNTHESIS)")
+        logger.info("=" * 80)
+        logger.info("SYSTEM PROMPT:")
+        logger.info(system_prompt)
+        logger.info("-" * 80)
+        logger.info("USER PROMPT:")
+        logger.info(user_prompt)
+        logger.info("=" * 80)
+        
         response = await self.llm_client.chat(
             messages=[
                 {"role": "system", "content": system_prompt},
@@ -463,10 +501,20 @@ Write detailed synthesis with descriptions for every item AND their dates:"""
             temperature=0.3,
             max_tokens=2048,  # Allow longer, more detailed responses
         )
+        
+        # Restore original model
+        self.llm_client.model = original_model
 
         # Extract synthesis - fix bug: response has "content" key, not "synthesis"
         if isinstance(response, dict) and "content" in response:
             synthesis: str = str(response["content"])
+            
+            # ============ FULL RESPONSE LOGGING ============
+            logger.info("=" * 80)
+            logger.info("📥 FULL LLM OUTPUT (RESEARCH - SYNTHESIS)")
+            logger.info("=" * 80)
+            logger.info(synthesis)
+            logger.info("=" * 80)
         else:
             logger.warning(f"Unexpected response format: {type(response)}")
             synthesis = ""
@@ -476,6 +524,9 @@ Write detailed synthesis with descriptions for every item AND their dates:"""
             logger.warning(f"⚠️ Synthesis too short ({len(synthesis)} chars), requesting more detail")
             # Try again with more explicit instructions
             retry_prompt = f"{user_prompt}\n\nIMPORTANT: Provide a DETAILED synthesis of at least 400 words. Do not summarize briefly."
+            
+            # Use Gemini again for retry
+            self.llm_client.model = "google/gemini-2.5-flash-lite"
             response = await self.llm_client.chat(
                 messages=[
                     {"role": "system", "content": system_prompt},
@@ -484,6 +535,9 @@ Write detailed synthesis with descriptions for every item AND their dates:"""
                 temperature=0.3,
                 max_tokens=2048,
             )
+            # Restore original model
+            self.llm_client.model = original_model
+            
             if isinstance(response, dict) and "content" in response:
                 synthesis = str(response["content"])
 
