@@ -2094,9 +2094,12 @@ Write a detailed answer with full explanations for everything:"""
         logger.info("=" * 80)
 
         try:
-            # Use Gemini 2.5 Flash Lite for final answer generation
+            # Use synthesis model for final answer generation (if configured)
+            from src.core.config import settings
             original_model = self.deps.llm_client.model
-            self.deps.llm_client.model = "google/gemini-2.5-flash-lite"
+            if settings.SYNTHESIS_LLM_MODEL:
+                self.deps.llm_client.model = settings.SYNTHESIS_LLM_MODEL
+                logger.info(f"Using synthesis model: {settings.SYNTHESIS_LLM_MODEL}")
             
             response = await self.deps.llm_client.chat(
                 messages=[{"role": "user", "content": prompt}],

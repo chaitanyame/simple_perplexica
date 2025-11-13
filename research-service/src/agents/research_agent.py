@@ -513,12 +513,16 @@ EXTRACT AND EXPLAIN ALL INFORMATION:
 
 Write detailed synthesis with descriptions for every item AND their dates:"""
 
-        # Use Gemini 2.5 Flash Lite for final synthesis generation
+        # Use synthesis model for final synthesis generation (if configured)
         import structlog
+        from ..core.config import settings as config_settings
         logger = structlog.get_logger(__name__)
         original_model = self.llm_client.model
-        self.llm_client.model = "google/gemini-2.5-flash-lite"
-        logger.info("🤖 Using Gemini 2.5 Flash Lite for final synthesis generation")
+        if config_settings.SYNTHESIS_LLM_MODEL:
+            self.llm_client.model = config_settings.SYNTHESIS_LLM_MODEL
+            logger.info(f"🤖 Using synthesis model for final generation: {config_settings.SYNTHESIS_LLM_MODEL}")
+        else:
+            logger.info(f"🤖 Using research model for final generation: {original_model}")
         
         # ============ FULL PROMPT LOGGING ============
         logger.info("=" * 80)
@@ -563,8 +567,9 @@ Write detailed synthesis with descriptions for every item AND their dates:"""
             # Try again with more explicit instructions
             retry_prompt = f"{user_prompt}\n\nIMPORTANT: Provide a DETAILED synthesis of at least 400 words. Do not summarize briefly."
             
-            # Use Gemini again for retry
-            self.llm_client.model = "google/gemini-2.5-flash-lite"
+            # Use synthesis model again for retry (if configured)
+            if config_settings.SYNTHESIS_LLM_MODEL:
+                self.llm_client.model = config_settings.SYNTHESIS_LLM_MODEL
             response = await self.llm_client.chat(
                 messages=[
                     {"role": "system", "content": system_prompt},

@@ -68,10 +68,10 @@ async def create_search_agent(
     Returns:
         Configured SearchAgent instance
     """
-    # Initialize LLM client
+    # Initialize LLM client with DeepSeek R1 for search
     llm_client = OpenRouterClient(
         api_key=settings.OPENROUTER_API_KEY,
-        model=model or settings.LLM_MODEL,
+        model=model or settings.RESEARCH_LLM_MODEL,  # Use DeepSeek R1 for search
     )
 
     # Initialize tracer

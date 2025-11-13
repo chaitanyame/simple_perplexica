@@ -216,6 +216,13 @@ class Settings(BaseSettings):
         description="Fallback LLM timeout"
     )
     
+    # Synthesis LLM (Optional - for final answer generation)
+    # If not set, uses RESEARCH_LLM_MODEL
+    SYNTHESIS_LLM_MODEL: str | None = Field(
+        default=None,
+        description="Optional dedicated model for final synthesis/answer generation (e.g., google/gemini-2.5-flash-lite). If None, uses RESEARCH_LLM_MODEL"
+    )
+    
     # Feature Flags
     ENABLE_DYNAMIC_PROMPTS: bool = Field(
         default=True,
