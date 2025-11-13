@@ -116,6 +116,10 @@ class ResearchAgent:
         Raises:
             ValueError: If plan generation fails
         """
+        import structlog
+        import json
+        logger = structlog.get_logger(__name__)
+        
         from .prompt_strategy import should_use_dynamic_prompts
         from .system_prompt_generator import SystemPromptGenerator
         
@@ -161,10 +165,6 @@ Return JSON with:
         )
 
         # Extract plan data - response has "content" key with JSON string
-        import structlog
-        import json
-        logger = structlog.get_logger(__name__)
-        
         # Import extract_json_from_markdown from search_agent
         from .search_agent import extract_json_from_markdown
         
