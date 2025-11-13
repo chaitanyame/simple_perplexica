@@ -36,8 +36,13 @@ def main():
         st.subheader("🔍 Search Engine")
         search_engine = st.radio(
             "Select Search Backend",
-            options=["🌐 SearXNG (Primary)", "🚀 SerperDev (Alternative)", "🔄 Auto (SearXNG + SerperDev Fallback)"],
-            index=2,  # Default to Auto
+            options=[
+                "🌐 SearXNG (Primary)", 
+                "🚀 SerperDev (Alternative)", 
+                "🧠 Perplexity AI (Direct)",
+                "🔄 Auto (SearXNG + SerperDev + Perplexity Fallback)"
+            ],
+            index=3,  # Default to Auto with full cascade
             help="Choose which search engine to use for fetching results",
         )
         
@@ -45,7 +50,8 @@ def main():
         engine_map = {
             "🌐 SearXNG (Primary)": "searxng",
             "🚀 SerperDev (Alternative)": "serperdev",
-            "🔄 Auto (SearXNG + SerperDev Fallback)": "auto",
+            "🧠 Perplexity AI (Direct)": "perplexity",
+            "🔄 Auto (SearXNG + SerperDev + Perplexity Fallback)": "auto",
         }
         selected_engine = engine_map[search_engine]
         
@@ -54,8 +60,10 @@ def main():
             st.caption("✅ Open-source metasearch engine\n🌍 Multiple search engines aggregated\n🔒 Privacy-focused")
         elif selected_engine == "serperdev":
             st.caption("✅ Google search API\n⚡ Fast and reliable\n📊 Rich metadata")
+        elif selected_engine == "perplexity":
+            st.caption("✅ AI-powered search\n🤖 Direct answers with citations\n📝 Ready-to-use content")
         else:
-            st.caption("✅ Best of both worlds\n🔄 Automatic fallback\n🛡️ Redundancy")
+            st.caption("✅ Best of all worlds\n🔄 3-tier automatic fallback\n🛡️ Maximum redundancy")
 
         st.subheader("Query Optimization")
         search_mode = st.radio(
@@ -184,8 +192,15 @@ def render_search_mode(max_sources: int, timeout: int, model: str, mode: str, se
                 if timeout != default_timeout:
                     payload["timeout"] = timeout
                 
+                # Choose endpoint based on search engine
+                if search_engine == "perplexity":
+                    endpoint = f"{API_BASE_URL}/v1/search/perplexity"
+                    st.info("🧠 Using Perplexity AI for direct search with citations...")
+                else:
+                    endpoint = f"{API_BASE_URL}/v1/search"
+                
                 response = httpx.post(
-                    f"{API_BASE_URL}/v1/search",
+                    endpoint,
                     json=payload,
                     timeout=timeout + 10,
                 )

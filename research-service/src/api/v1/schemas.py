@@ -55,9 +55,9 @@ class SearchRequest(BaseModel):
         None,
         description="LLM model to use (e.g., 'anthropic/claude-3.5-sonnet')",
     )
-    search_engine: Literal["searxng", "serperdev", "auto"] | None = Field(
+    search_engine: Literal["searxng", "serperdev", "perplexity", "auto"] | None = Field(
         "auto",
-        description="Search engine backend: 'searxng' (open-source), 'serperdev' (Google API), 'auto' (SearXNG with SerperDev fallback)",
+        description="Search engine backend: 'searxng' (open-source), 'serperdev' (Google API), 'perplexity' (AI-powered), 'auto' (SearXNG + SerperDev + Perplexity fallback)",
     )
     # Enhanced reranking options (experimental)
     enable_diversity: bool = Field(

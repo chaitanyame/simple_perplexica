@@ -47,6 +47,40 @@ class Settings(BaseSettings):
     )
     SERPER_API_KEY: str | None = Field(default=None, description="SerperDev API key (optional)")
 
+    # Perplexity AI (Fallback Search)
+    PERPLEXITY_API_KEY: str | None = Field(
+        default=None, description="Perplexity API key (optional, for fallback search)"
+    )
+    PERPLEXITY_MODEL: str = Field(
+        default="sonar-pro", description="Perplexity model to use (sonar-pro for best research)"
+    )
+    PERPLEXITY_TIMEOUT: int = Field(
+        default=30, ge=5, le=300, description="Perplexity request timeout (seconds)"
+    )
+    PERPLEXITY_SEARCH_CONTEXT_SIZE: str = Field(
+        default="low", description="Perplexity search context size: low, medium, high"
+    )
+    PERPLEXITY_MAX_RETRIES: int = Field(
+        default=2, ge=0, le=5, description="Max retry attempts for Perplexity API"
+    )
+    PERPLEXITY_CIRCUIT_BREAKER_THRESHOLD: int = Field(
+        default=5, ge=1, le=20, description="Failures before circuit breaker opens"
+    )
+    PERPLEXITY_CIRCUIT_BREAKER_TIMEOUT: int = Field(
+        default=300, ge=60, le=3600, description="Seconds before circuit breaker retry"
+    )
+
+    # Search Fallback Configuration
+    ENABLE_SEARCH_FALLBACK: bool = Field(
+        default=True, description="Enable 3-tier search fallback cascade"
+    )
+    SEARXNG_MIN_RESULTS_THRESHOLD: int = Field(
+        default=3, ge=1, le=10, description="Min SearxNG results before fallback to SerperDev"
+    )
+    SERPERDEV_MIN_RESULTS_THRESHOLD: int = Field(
+        default=3, ge=1, le=10, description="Min SerperDev results before fallback to Perplexity"
+    )
+
     # Research Pipeline Settings
     RESEARCH_MAX_ITERATIONS: int = Field(
         default=3, description="Maximum refinement iterations for research mode"

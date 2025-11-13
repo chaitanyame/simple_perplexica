@@ -1187,6 +1187,247 @@ Respond with valid JSON only."""
             "primary_type": primary_type if max(ratios.values()) > 0.2 else "mixed"
         }
 
+    def _detect_any_comparison(self, query: str) -> dict[str, bool]:
+        """Detect if query is comparing multiple items (generic comparison detection).
+
+        Works for any type of comparison:
+        - Cloud providers: AWS vs Azure vs GCP
+        - Programming languages: Python vs JavaScript
+        - Frameworks: React vs Vue
+        - Databases: PostgreSQL vs MongoDB
+        - Tools: Docker vs Kubernetes
+        - And anything else being compared
+
+        Args:
+            query: User's search query
+
+        Returns:
+            Dictionary with detected comparison info:
+            {
+                "is_comparison": bool,
+                "items": list[str],  # Items being compared
+                "item_count": int,
+                "comparison_type": str,  # "cloud_provider", "programming", "generic"
+                "provider_info": dict  # Special cloud provider details if applicable
+            }
+
+        Example:
+            >>> result = agent._detect_any_comparison("Compare Python and JavaScript")
+            >>> result["is_comparison"]
+            True
+            >>> result["items"]
+            ["python", "javascript"]
+            >>> result["item_count"]
+            2
+        """
+        query_lower = query.lower()
+
+        # First, check for cloud provider comparison (special case for better formatting)
+        cloud_provider_info = self._detect_provider_comparison(query)
+        if cloud_provider_info["is_comparison"]:
+            return {
+                "is_comparison": True,
+                "items": cloud_provider_info["providers"],
+                "item_count": cloud_provider_info["provider_count"],
+                "comparison_type": "cloud_provider",
+                "provider_info": cloud_provider_info
+            }
+
+        # Generic comparison detection for any items
+        comparison_keywords = ["vs", "versus", "compare", "comparison", "difference", "between"]
+        has_comparison_keyword = any(kw in query_lower for kw in comparison_keywords)
+
+        # Extract potential items from the query by looking for common separators
+        items = []
+        if has_comparison_keyword:
+            # Split by comparison keywords to extract items
+            import re
+
+            # Replace comparison keywords with delimiter for splitting
+            temp_query = query_lower
+            for kw in comparison_keywords:
+                temp_query = temp_query.replace(kw, "|")
+
+            # Split and clean items
+            potential_items = [item.strip() for item in temp_query.split("|")]
+
+            # Filter out empty items and very short items (likely noise)
+            items = [
+                item for item in potential_items
+                if item and len(item) > 2 and item not in ["and", "or", "the"]
+            ]
+
+            # Remove overly long items (likely full clauses, not just items being compared)
+            items = [item for item in items if len(item) < 100]
+
+        # It's a comparison if we found 2+ distinct items with comparison keyword
+        is_comparison = has_comparison_keyword and len(items) >= 2
+
+        return {
+            "is_comparison": is_comparison,
+            "items": items,
+            "item_count": len(items),
+            "comparison_type": "generic",
+            "provider_info": {}
+        }
+
+    def _detect_provider_comparison(self, query: str) -> dict[str, bool]:
+        """Detect if query is comparing multiple cloud providers.
+
+        Identifies cloud provider mentions to ensure balanced coverage:
+        - AWS / Amazon Web Services
+        - Azure / Microsoft Azure
+        - GCP / Google Cloud Platform / Google Cloud
+        - Other providers (Oracle, Alibaba, etc.)
+
+        Args:
+            query: User's search query
+
+        Returns:
+            Dictionary with detected providers:
+            {
+                "is_comparison": bool,
+                "providers": list[str],
+                "aws": bool,
+                "azure": bool,
+                "gcp": bool,
+                "other_providers": list[str]
+            }
+
+        Example:
+            >>> result = agent._detect_provider_comparison("Compare AWS and Azure")
+            >>> result["is_comparison"]
+            True
+            >>> result["providers"]
+            ["aws", "azure"]
+        """
+        query_lower = query.lower()
+
+        # Provider detection patterns
+        providers_detected = {
+            "aws": any(term in query_lower for term in ["aws", "amazon web services", "amazon aws"]),
+            "azure": any(term in query_lower for term in ["azure", "microsoft azure"]),
+            "gcp": any(term in query_lower for term in ["gcp", "google cloud", "google cloud platform"]),
+        }
+
+        # Other cloud providers
+        other_keywords = ["oracle cloud", "alibaba cloud", "ibm cloud", "digital ocean", "linode"]
+        other_providers = [p for p in other_keywords if p in query_lower]
+
+        # Detect if this is a comparison query
+        comparison_keywords = ["vs", "versus", "compare", "comparison", "difference", "between", "and"]
+        is_comparison = any(kw in query_lower for kw in comparison_keywords)
+
+        # Count detected providers
+        detected_count = sum(1 for v in providers_detected.values() if v)
+
+        # It's a comparison if multiple providers OR explicit comparison keyword + any provider
+        is_comparison = is_comparison and detected_count >= 2 or (detected_count > 1 and not is_comparison)
+
+        providers_list = [p for p, detected in providers_detected.items() if detected]
+        providers_list.extend(other_providers)
+
+        return {
+            "is_comparison": is_comparison,
+            "providers": providers_list,
+            "aws": providers_detected["aws"],
+            "azure": providers_detected["azure"],
+            "gcp": providers_detected["gcp"],
+            "other_providers": other_providers,
+            "provider_count": len(providers_list)
+        }
+
+    def _get_balanced_coverage_instructions(self, comparison_info: dict) -> str:
+        """Build instructions for balanced multi-item comparison coverage.
+
+        Works for ANY comparison (cloud providers, programming languages, frameworks, etc.)
+        Ensures equal representation and prevents quality-based bias from suppressing items.
+
+        Args:
+            comparison_info: Dictionary from _detect_any_comparison()
+                           Also supports legacy format from _detect_provider_comparison()
+
+        Returns:
+            Coverage balancing instruction string
+
+        Example:
+            >>> info = {"is_comparison": True, "items": ["python", "javascript"], "item_count": 2}
+            >>> instructions = agent._get_balanced_coverage_instructions(info)
+            >>> "equal coverage" in instructions.lower()
+            True
+        """
+        # Handle both new and legacy formats
+        is_comparison = comparison_info.get("is_comparison", False)
+
+        # Determine which format we're dealing with
+        if "item_count" in comparison_info:
+            # New generic format from _detect_any_comparison()
+            item_count = comparison_info.get("item_count", 0)
+            items = comparison_info.get("items", [])
+            comparison_type = comparison_info.get("comparison_type", "generic")
+        else:
+            # Legacy format from _detect_provider_comparison()
+            item_count = comparison_info.get("provider_count", 0)
+            items = comparison_info.get("providers", [])
+            comparison_type = "cloud_provider"
+
+        if not is_comparison or item_count < 2:
+            return ""
+
+        target_coverage = 1.0 / item_count
+
+        # Build item-specific sections
+        item_sections = []
+
+        if comparison_type == "cloud_provider":
+            # Special handling for cloud providers with known names
+            provider_info = comparison_info.get("provider_info", {})
+            if provider_info.get("aws"):
+                item_sections.append("AWS: Include all announcements, features, services, and tools mentioned")
+            if provider_info.get("azure"):
+                item_sections.append("Azure: Include all announcements, features, services, and tools mentioned")
+            if provider_info.get("gcp"):
+                item_sections.append("Google Cloud: Include all announcements, features, services, and tools mentioned")
+
+            for other in provider_info.get("other_providers", []):
+                item_sections.append(f"{other.title()}: Include all announcements and updates mentioned")
+        else:
+            # Generic items - just include all with standard requirements
+            for item in items:
+                # Capitalize properly
+                item_display = " ".join(word.capitalize() for word in item.split())
+                item_sections.append(f"{item_display}: Include all specific information, features, and details mentioned")
+
+        # Determine plural form for items
+        item_type = "items" if len(items) > 1 else "item"
+        items_display = ", ".join([item.upper() if len(item) <= 10 else item.title() for item in items])
+
+        instructions = f"""
+MULTI-ITEM BALANCED COVERAGE REQUIREMENT:
+This query compares {item_count} {item_type}: {items_display}
+
+EQUAL REPRESENTATION MANDATE:
+- Allocate approximately {target_coverage:.0%} of coverage to each {item_type.rstrip('s')}
+- Include all specific information, features, and details for each item
+- Do NOT deprioritize any item due to source quality, specificity, or citation differences
+- Each item section should be roughly equal in detail and length
+
+ITEM-SPECIFIC REQUIREMENTS:
+{chr(10).join('- ' + section for section in item_sections)}
+
+COVERAGE BALANCE CHECK:
+Before finalizing the answer, verify:
+[OK] Each item has substantial dedicated coverage
+[OK] No item is reduced to a single generic line
+[OK] All specific features/details are represented proportionally
+[OK] Information items are balanced across all mentioned items
+
+DO NOT USE INVERTED PYRAMID FOR ITEM ORDERING
+- Instead, organize by item (one section per item)
+- Within each item, use inverted pyramid for features/announcements
+"""
+        return instructions
+
     def _build_content_type_instructions(self, composition: dict) -> str:
         """Build content-type-specific instructions based on source composition.
 
@@ -1708,6 +1949,26 @@ FORMATTING:
         if format_instructions:
             logger.info(f"📝 Format instructions: {len(format_instructions)} chars")
 
+        # ========== BALANCED COVERAGE DETECTION (ANY COMPARISON) ==========
+        # Detect any comparison queries (cloud providers, languages, frameworks, etc.)
+        # and ensure equal balanced coverage for all items
+        comparison_info = self._detect_any_comparison(query)
+        balanced_coverage_instructions = self._get_balanced_coverage_instructions(comparison_info)
+
+        if comparison_info["is_comparison"]:
+            comparison_type = comparison_info.get("comparison_type", "generic")
+            items = comparison_info.get("items", [])
+            item_count = comparison_info.get("item_count", 0)
+
+            if comparison_type == "cloud_provider":
+                logger.info(f"🔍 Cloud provider comparison detected: {', '.join([p.upper() for p in items])}")
+            else:
+                logger.info(f"🔍 Multi-item comparison detected: {', '.join([item.title() for item in items])}")
+
+            logger.info(f"📊 Items being compared: {item_count}")
+            if balanced_coverage_instructions:
+                logger.info(f"📝 Balanced coverage instructions: {len(balanced_coverage_instructions)} chars")
+
         # ========== PHASE 3 TASK 2: MULTI-LINGUAL ADAPTATION ==========
         # Detect language and build language-specific instructions
         detected_language = sub_queries[0].language if sub_queries else "en"
@@ -1814,6 +2075,8 @@ Based on the sources provided, adapt your response style accordingly:
 
 LANGUAGE-SPECIFIC CONVENTIONS:
 {language_instructions}
+
+{balanced_coverage_instructions}
 
 Write a detailed answer with full explanations for everything:"""
 

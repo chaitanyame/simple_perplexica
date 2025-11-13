@@ -349,3 +349,104 @@ async def search(
                 "details": error_details if settings.LOG_LEVEL == "DEBUG" else None,
             },
         )
+
+
+@router.post(
+    "/search/perplexity",
+    response_model=SearchResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Execute Perplexity AI search",
+    description="Perform direct search using Perplexity AI (returns ready-to-use answer with citations)",
+    responses={
+        200: {"description": "Perplexity search completed successfully"},
+        422: {"description": "Validation error"},
+        500: {"description": "Perplexity API error"},
+    },
+)
+async def search_with_perplexity(
+    request: SearchRequest,
+    db: AsyncSession = Depends(get_db),
+) -> SearchResponse:
+    """Execute search query using Perplexity AI directly.
+    
+    This endpoint bypasses the SearchAgent and uses Perplexity AI's search API
+    directly, which returns a complete answer with citations that requires no
+    further processing.
+    
+    Args:
+        request: Search request with query and parameters
+        db: Database session
+        
+    Returns:
+        SearchResponse with Perplexity's answer and citations
+        
+    Raises:
+        HTTPException: On API error or execution failure
+    """
+    from src.services.search.perplexity_search import perplexity_search
+    
+    session_id = uuid.uuid4()
+    
+    try:
+        import time
+        start_time = time.time()
+        
+        # Call Perplexity directly (no model parameter - uses config default)
+        result = await perplexity_search(
+            query=request.query,
+            temperature=0.2,  # Precision-focused
+        )
+        
+        execution_time = time.time() - start_time
+        
+        # Build sources from citations
+        sources = []
+        for citation in result.get("citations", []):
+            sources.append(
+                SearchSourceResponse(
+                    url=citation["url"],
+                    title=citation.get("title", f"Citation [{citation['index']}]"),
+                    snippet="",  # Perplexity doesn't provide snippets
+                    relevance=0.95,  # High relevance - Perplexity's curated results
+                    semantic_score=None,  # No reranking needed
+                    final_score=0.95,  # Same as relevance
+                    source_type="web",  # Default to web
+                )
+            )
+        
+        response = SearchResponse(
+            session_id=session_id,
+            query=request.query,
+            answer=result["content"],
+            sources=sources,
+            sub_queries=[],  # Perplexity handles decomposition internally
+            execution_time=execution_time,
+            model_used=result.get("model", settings.PERPLEXITY_MODEL),
+            mode="perplexity",
+            confidence=0.95,  # High confidence - Perplexity curated results
+            trace_url=None,
+        )
+        
+        # Store session in database
+        await store_search_session(
+            db=db,
+            session_id=session_id,
+            query=request.query,
+            result=response.model_dump(mode="json"),
+        )
+        
+        return response
+        
+    except HTTPException:
+        raise
+        
+    except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"❌ Perplexity Search Error: {str(e)}")
+        print(f"Traceback:\n{error_details}")
+        
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Perplexity search execution failed: {str(e)}",
+        )
