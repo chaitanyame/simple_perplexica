@@ -389,4 +389,7 @@ async def _generate_answer(
         max_tokens=1000,
     )
 
+    # Flush traces to Langfuse before returning
+    tracer.flush()
+
     return response.get("content", "Unable to generate answer")

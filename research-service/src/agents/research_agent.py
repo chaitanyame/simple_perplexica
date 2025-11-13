@@ -620,7 +620,7 @@ Write detailed synthesis with descriptions for every item AND their dates:"""
                 # Log to Langfuse if available
                 if self.tracer:
                     try:
-                        self.tracer.log_event(
+                        grounding_span = self.tracer.create_span(
                             name="citation_grounding",
                             metadata={
                                 "overall_grounding": grounding_result.overall_grounding,
@@ -630,6 +630,8 @@ Write detailed synthesis with descriptions for every item AND their dates:"""
                                 "grounding_threshold": 0.6,
                             },
                         )
+                        if grounding_span:
+                            self.tracer.end_span()
                     except Exception as e:
                         logger.warning(f"Failed to log grounding to Langfuse: {e}")
                 

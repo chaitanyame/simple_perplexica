@@ -59,17 +59,18 @@ async def create_research_agent(
     Returns:
         Configured ResearchAgent instance
     """
-    # Initialize LLM client with DeepSeek R1 for research
-    llm_client = OpenRouterClient(
-        api_key=settings.OPENROUTER_API_KEY,
-        model=model or settings.RESEARCH_LLM_MODEL,  # Use DeepSeek R1 for research
-    )
-
-    # Initialize tracer
+    # Initialize tracer first (needed by LLM client)
     tracer = LangfuseTracer(
         public_key=settings.LANGFUSE_PUBLIC_KEY,
         secret_key=settings.LANGFUSE_SECRET_KEY,
         host=settings.LANGFUSE_HOST,
+    )
+
+    # Initialize LLM client with DeepSeek R1 for research
+    llm_client = OpenRouterClient(
+        api_key=settings.OPENROUTER_API_KEY,
+        model=model or settings.RESEARCH_LLM_MODEL,  # Use DeepSeek R1 for research
+        tracer=tracer,
     )
 
     # Initialize SearxNG client
@@ -294,6 +295,10 @@ async def research(
             query=request.query,
             result=response.model_dump(mode="json"),
         )
+
+        # Flush traces to Langfuse before returning
+        if agent.deps.tracer:
+            agent.deps.tracer.flush()
 
         return response
 
