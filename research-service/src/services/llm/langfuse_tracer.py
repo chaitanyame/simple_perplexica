@@ -47,7 +47,7 @@ class LangfuseTracer:
         self,
         public_key: str | None = None,
         secret_key: str | None = None,
-        host: str | None = None,
+        base_url: str | None = None,
         enabled: bool = True,
     ) -> None:
         """Initialize Langfuse tracer.
@@ -55,7 +55,7 @@ class LangfuseTracer:
         Args:
             public_key: Langfuse public API key (defaults to settings)
             secret_key: Langfuse secret API key (defaults to settings)
-            host: Langfuse host URL (defaults to settings)
+            base_url: Langfuse base URL (defaults to settings)
             enabled: Whether tracing is enabled (defaults to True)
         """
         self.enabled = enabled
@@ -72,7 +72,7 @@ class LangfuseTracer:
             self.langfuse_client = Langfuse(
                 public_key=public_key or settings.LANGFUSE_PUBLIC_KEY,
                 secret_key=secret_key or settings.LANGFUSE_SECRET_KEY,
-                host=host or settings.LANGFUSE_HOST,
+                base_url=base_url or settings.LANGFUSE_BASE_URL,
             )
             logger.info("Langfuse tracer initialized")
         except Exception as e:

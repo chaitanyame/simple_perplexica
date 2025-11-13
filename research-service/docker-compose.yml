@@ -55,7 +55,7 @@ services:
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
       LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY}
       LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY}
-      LANGFUSE_HOST: ${LANGFUSE_HOST:-https://cloud.langfuse.com}
+      LANGFUSE_BASE_URL: ${LANGFUSE_BASE_URL:-https://cloud.langfuse.com}
       
       # Search (reuse from main app if available)
       # Connect to SearXNG container via Docker network

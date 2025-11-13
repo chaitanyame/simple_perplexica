@@ -46,8 +46,8 @@ class Settings(BaseSettings):
     # Langfuse (Monitoring)
     LANGFUSE_PUBLIC_KEY: str = Field(..., description="Langfuse public key")
     LANGFUSE_SECRET_KEY: str = Field(..., description="Langfuse secret key")
-    LANGFUSE_HOST: str = Field(
-        default="https://cloud.langfuse.com", description="Langfuse host URL"
+    LANGFUSE_BASE_URL: str = Field(
+        default="https://cloud.langfuse.com", description="Langfuse base URL"
     )
 
     # Search Services
