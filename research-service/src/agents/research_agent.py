@@ -99,11 +99,16 @@ class ResearchAgent:
         self.max_iterations = deps.max_iterations
         self.timeout = deps.timeout
 
-    async def generate_plan(self, query: str) -> ResearchPlan:
+    async def generate_plan(
+        self, 
+        query: str,
+        prompt_strategy: str | None = None
+    ) -> ResearchPlan:
         """Generate multi-step research plan.
 
         Args:
             query: Research query to plan for
+            prompt_strategy: "static", "dynamic", or "auto" (default: "auto")
 
         Returns:
             ResearchPlan with ordered steps and dependencies
@@ -111,7 +116,22 @@ class ResearchAgent:
         Raises:
             ValueError: If plan generation fails
         """
-        system_prompt = """You are a research planning expert. Break down complex queries into structured research plans.
+        from .prompt_strategy import should_use_dynamic_prompts
+        from .system_prompt_generator import SystemPromptGenerator
+        
+        # Determine which prompt strategy to use
+        use_dynamic = should_use_dynamic_prompts(prompt_strategy)
+        
+        if use_dynamic:
+            # Use dynamic query-aware prompt
+            system_prompt = SystemPromptGenerator.generate(
+                query=query,
+                mode="research"  # Planning is part of research
+            )
+            logger.info("Using dynamic system prompt for plan generation", query=query[:50])
+        else:
+            # Use static prompt
+            system_prompt = """You are a research planning expert. Break down complex queries into structured research plans.
 
 For each step:
 - Assign a sequential step_number
@@ -123,6 +143,7 @@ Complexity levels:
 - simple: 1-2 steps, single topic
 - medium: 2-4 steps, related topics
 - complex: 4+ steps, multiple topics with dependencies"""
+            logger.info("Using static system prompt for plan generation")
 
         user_prompt = f"""Create a research plan for: "{query}"
 
@@ -370,6 +391,7 @@ Return JSON with:
         citations: list[Citation], 
         query: str,
         enable_grounding: bool = True,
+        prompt_strategy: str | None = None,
     ) -> tuple[str, GroundingResult | None]:
         """Synthesize findings from multiple citations with optional grounding verification.
 
@@ -377,6 +399,7 @@ Return JSON with:
             citations: List of citations to synthesize
             query: Original research query
             enable_grounding: Whether to verify claims against sources (default: True)
+            prompt_strategy: "static", "dynamic", or "auto" (default: "auto")
 
         Returns:
             Tuple of (synthesis_text, grounding_result)
@@ -386,7 +409,22 @@ Return JSON with:
         Raises:
             ValueError: If synthesis fails
         """
-        system_prompt = """You are a research synthesis expert who extracts and explains SPECIFIC information from sources.
+        from .prompt_strategy import should_use_dynamic_prompts
+        from .system_prompt_generator import SystemPromptGenerator
+        
+        # Determine which prompt strategy to use
+        use_dynamic = should_use_dynamic_prompts(prompt_strategy)
+        
+        if use_dynamic:
+            # Use dynamic query-aware prompt
+            system_prompt = SystemPromptGenerator.generate(
+                query=query,
+                mode="research"  # Synthesis is part of research
+            )
+            logger.info("Using dynamic system prompt for synthesis", query=query[:50])
+        else:
+            # Use static prompt
+            system_prompt = """You are a research synthesis expert who extracts and explains SPECIFIC information from sources.
 
 MANDATORY Rules:
 - Extract EVERY specific detail: names, numbers, dates, features, products
@@ -675,12 +713,14 @@ Identify gaps:"""
         self,
         query: str,
         mode: SearchMode | str | None = None,
+        prompt_strategy: str | None = None,
     ) -> ResearchOutput:
         """Execute full research workflow with configurable mode.
 
         Args:
             query: Research query to process
             mode: Search mode (SPEED/BALANCED/DEEP) or mode string or None (defaults to BALANCED)
+            prompt_strategy: "static", "dynamic", or "auto" (default: "auto")
 
         Returns:
             ResearchOutput with plan, findings, and citations
@@ -704,15 +744,20 @@ Identify gaps:"""
         
         import structlog
         logger = structlog.get_logger(__name__)
+        
+        from .prompt_strategy import get_prompt_strategy_description
+        strategy_desc = get_prompt_strategy_description(prompt_strategy or "auto")
+        
         logger.info(
-            "Starting research with mode",
+            "Starting research with mode and prompt strategy",
             query=query,
             mode=search_mode.value,
+            prompt_strategy=strategy_desc
         )
 
         # Step 1: Generate plan
         logger.info("📝 Generating research plan")
-        plan = await self.generate_plan(query)
+        plan = await self.generate_plan(query, prompt_strategy=prompt_strategy)
         logger.info(f"✅ Plan generated with {len(plan.steps)} steps", steps=[s.search_query for s in plan.steps])
 
         # Step 2: Execute plan steps with mode
@@ -729,7 +774,7 @@ Identify gaps:"""
 
         # Step 4: Synthesize findings with grounding
         findings, grounding_result = await self.synthesize_findings(
-            citations, query, enable_grounding=True
+            citations, query, enable_grounding=True, prompt_strategy=prompt_strategy
         )
 
         # Step 5: Build output

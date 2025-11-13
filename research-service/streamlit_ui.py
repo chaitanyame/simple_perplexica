@@ -65,6 +65,30 @@ def main():
         else:
             st.caption("✅ Best of all worlds\n🔄 3-tier automatic fallback\n🛡️ Maximum redundancy")
 
+        st.subheader("🎯 Prompt Strategy")
+        prompt_strategy_option = st.radio(
+            "System Prompts",
+            options=["🤖 Auto (Config)", "📝 Static (Fixed)", "✨ Dynamic (Context-Aware)"],
+            index=0,  # Default to Auto
+            help="Choose how system prompts are generated",
+        )
+        
+        # Extract prompt strategy
+        prompt_strategy_map = {
+            "🤖 Auto (Config)": "auto",
+            "📝 Static (Fixed)": "static",
+            "✨ Dynamic (Context-Aware)": "dynamic",
+        }
+        selected_prompt_strategy = prompt_strategy_map[prompt_strategy_option]
+        
+        # Display prompt strategy info
+        if selected_prompt_strategy == "static":
+            st.caption("✅ Fixed prompts\n⚡ Always fast\n🎯 Predictable results")
+        elif selected_prompt_strategy == "dynamic":
+            st.caption("✅ Query-aware prompts\n🎨 Context-optimized\n📊 Type & domain detection")
+        else:
+            st.caption("✅ Uses ENABLE_DYNAMIC_PROMPTS setting\n⚙️ Default from config\n🔧 Change in .env")
+
         st.subheader("Query Optimization")
         search_mode = st.radio(
             "Search Mode",
@@ -143,12 +167,12 @@ def main():
 
     # Main content
     if mode == "Search":
-        render_search_mode(max_sources, timeout, model, selected_mode, selected_engine)
+        render_search_mode(max_sources, timeout, model, selected_mode, selected_engine, selected_prompt_strategy)
     else:
-        render_research_mode(max_iterations, timeout, model, selected_mode, selected_engine)
+        render_research_mode(max_iterations, timeout, model, selected_mode, selected_engine, selected_prompt_strategy)
 
 
-def render_search_mode(max_sources: int, timeout: int, model: str, mode: str, search_engine: str):
+def render_search_mode(max_sources: int, timeout: int, model: str, mode: str, search_engine: str, prompt_strategy: str):
     """Render search interface."""
     st.header("🔎 Fast Search")
     st.write(f"Quick web search with multi-source aggregation (via {search_engine.upper()})")
@@ -185,6 +209,7 @@ def render_search_mode(max_sources: int, timeout: int, model: str, mode: str, se
                     "mode": mode,
                     "model": model,
                     "search_engine": search_engine,  # Add search engine preference
+                    "prompt_strategy": prompt_strategy,  # Add prompt strategy
                 }
                 # Only include overrides if user changed them from mode defaults
                 if max_sources != default_sources:
@@ -281,7 +306,7 @@ def render_search_result(data: dict):
         )
 
 
-def render_research_mode(max_iterations: int, timeout: int, model: str, mode: str, search_engine: str):
+def render_research_mode(max_iterations: int, timeout: int, model: str, mode: str, search_engine: str, prompt_strategy: str):
     """Render research interface."""
     st.header("🔬 Deep Research")
     st.write(f"Comprehensive research with iterative synthesis (via {search_engine.upper()})")
@@ -313,6 +338,7 @@ def render_research_mode(max_iterations: int, timeout: int, model: str, mode: st
                         "mode": mode,
                         "model": model,
                         "search_engine": search_engine,  # Add search engine preference
+                        "prompt_strategy": prompt_strategy,  # Add prompt strategy
                     },
                     timeout=timeout + 10,
                 )

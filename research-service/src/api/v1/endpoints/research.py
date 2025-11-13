@@ -259,10 +259,14 @@ async def research(
             timeout=float(timeout),
         )
 
-        # Execute research with timeout and mode
+        # Execute research with timeout, mode, and prompt strategy
         try:
             output = await asyncio.wait_for(
-                agent.run(request.query, mode=search_mode),
+                agent.run(
+                    request.query, 
+                    mode=search_mode,
+                    prompt_strategy=request.prompt_strategy
+                ),
                 timeout=float(timeout),
             )
         except TimeoutError:

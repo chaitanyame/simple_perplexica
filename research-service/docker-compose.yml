@@ -73,6 +73,9 @@ services:
       # LLM Model
       LLM_MODEL: ${LLM_MODEL:-anthropic/claude-3.5-sonnet}
       
+      # Prompt Strategy (Phase 4 - Configurable Prompts)
+      ENABLE_DYNAMIC_PROMPTS: ${ENABLE_DYNAMIC_PROMPTS:-true}
+      
       # PyTorch/HuggingFace Settings (fix Dockling issues)
       TOKENIZERS_PARALLELISM: "false"
       OMP_NUM_THREADS: "1"

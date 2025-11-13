@@ -59,6 +59,10 @@ class SearchRequest(BaseModel):
         "auto",
         description="Search engine backend: 'searxng' (open-source), 'serperdev' (Google API), 'perplexity' (AI-powered), 'auto' (SearXNG + SerperDev + Perplexity fallback)",
     )
+    prompt_strategy: Literal["static", "dynamic", "auto"] | None = Field(
+        "auto",
+        description="System prompt strategy: 'static' (fixed prompts), 'dynamic' (query-aware prompts), 'auto' (uses ENABLE_DYNAMIC_PROMPTS from config)",
+    )
     # Enhanced reranking options (experimental)
     enable_diversity: bool = Field(
         False,
@@ -194,6 +198,10 @@ class ResearchRequest(BaseModel):
     model: str | None = Field(
         None,
         description="LLM model to use (e.g., 'anthropic/claude-3.5-sonnet')",
+    )
+    prompt_strategy: Literal["static", "dynamic", "auto"] | None = Field(
+        "auto",
+        description="System prompt strategy: 'static' (fixed prompts), 'dynamic' (query-aware prompts), 'auto' (uses ENABLE_DYNAMIC_PROMPTS from config)",
     )
 
     @field_validator("query")

@@ -1,7 +1,27 @@
 """Configuration management for research service."""
 
-from pydantic import Field, PostgresDsn, RedisDsn
+from pydantic import BaseModel, Field, PostgresDsn, RedisDsn
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class LLMConfig(BaseModel):
+    """Configuration for a specific LLM.
+    
+    Attributes:
+        provider: LLM provider (openrouter, openai, etc.)
+        model: Model identifier (e.g., 'deepseek/deepseek-r1:free')
+        temperature: Sampling temperature (0.0-2.0)
+        max_tokens: Maximum tokens to generate (100-32000)
+        timeout: Request timeout in seconds (10-600)
+    """
+
+    provider: str = Field(..., description="LLM provider (openrouter, openai, etc.)")
+    model: str = Field(..., description="Model identifier")
+    temperature: float = Field(..., ge=0.0, le=2.0, description="Sampling temperature")
+    max_tokens: int = Field(..., ge=100, le=32000, description="Maximum tokens to generate")
+    timeout: int = Field(..., ge=10, le=600, description="Request timeout (seconds)")
+
+    model_config = {"frozen": True}  # Make immutable
 
 
 class Settings(BaseSettings):
@@ -127,13 +147,83 @@ class Settings(BaseSettings):
         description="Weight for semantic score in final ranking (0.0-1.0)"
     )
 
-    # LLM Models
+    # LLM Models (Legacy - kept for backward compatibility)
     LLM_MODEL: str = Field(
         default="anthropic/claude-3.5-sonnet", description="Primary LLM model for synthesis"
     )
     PLANNING_MODEL: str = Field(
         default="anthropic/claude-3.5-sonnet",
         description="LLM model for planning and decomposition",
+    )
+    
+    # ========================================
+    # Dynamic LLM Configuration (New)
+    # ========================================
+    
+    # Research LLM (Primary, User-Facing)
+    RESEARCH_LLM_PROVIDER: str = Field(
+        default="openrouter",
+        description="Research LLM provider"
+    )
+    RESEARCH_LLM_MODEL: str = Field(
+        default="deepseek/deepseek-r1:free",
+        description="Research LLM model (DeepSeek R1 free for reasoning)"
+    )
+    RESEARCH_LLM_TEMPERATURE: float = Field(
+        default=0.3,
+        ge=0.0,
+        le=2.0,
+        description="Research LLM temperature"
+    )
+    RESEARCH_LLM_MAX_TOKENS: int = Field(
+        default=8192,
+        ge=100,
+        le=32000,
+        description="Research LLM max tokens"
+    )
+    RESEARCH_LLM_TIMEOUT: int = Field(
+        default=180,
+        ge=10,
+        le=600,
+        description="Research LLM timeout (R1 needs time for reasoning)"
+    )
+    
+    # Fallback LLM (Secondary)
+    FALLBACK_LLM_PROVIDER: str = Field(
+        default="openrouter",
+        description="Fallback LLM provider"
+    )
+    FALLBACK_LLM_MODEL: str = Field(
+        default="google/gemini-2.0-flash-thinking-exp:free",
+        description="Fallback LLM model (Gemini free)"
+    )
+    FALLBACK_LLM_TEMPERATURE: float = Field(
+        default=0.2,
+        ge=0.0,
+        le=2.0,
+        description="Fallback LLM temperature"
+    )
+    FALLBACK_LLM_MAX_TOKENS: int = Field(
+        default=4096,
+        ge=100,
+        le=32000,
+        description="Fallback LLM max tokens"
+    )
+    FALLBACK_LLM_TIMEOUT: int = Field(
+        default=120,
+        ge=10,
+        le=600,
+        description="Fallback LLM timeout"
+    )
+    
+    # Feature Flags
+    ENABLE_DYNAMIC_PROMPTS: bool = Field(
+        default=True,
+        description="Enable dynamic system prompt generation (pure logic, no LLM cost)"
+    )
+    ENABLE_LLM_FALLBACK: bool = Field(
+        default=True,
+        description="Enable fallback to secondary LLM on primary failure"
     )
 
     # API Configuration
@@ -152,6 +242,40 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore"
     )
+    
+    # ========================================
+    # Computed Properties for LLMConfig
+    # ========================================
+    
+    @property
+    def research_llm_config(self) -> LLMConfig:
+        """Get research LLM configuration.
+        
+        Returns:
+            LLMConfig for primary research LLM (DeepSeek R1)
+        """
+        return LLMConfig(
+            provider=self.RESEARCH_LLM_PROVIDER,
+            model=self.RESEARCH_LLM_MODEL,
+            temperature=self.RESEARCH_LLM_TEMPERATURE,
+            max_tokens=self.RESEARCH_LLM_MAX_TOKENS,
+            timeout=self.RESEARCH_LLM_TIMEOUT
+        )
+    
+    @property
+    def fallback_llm_config(self) -> LLMConfig:
+        """Get fallback LLM configuration.
+        
+        Returns:
+            LLMConfig for fallback LLM (Gemini)
+        """
+        return LLMConfig(
+            provider=self.FALLBACK_LLM_PROVIDER,
+            model=self.FALLBACK_LLM_MODEL,
+            temperature=self.FALLBACK_LLM_TEMPERATURE,
+            max_tokens=self.FALLBACK_LLM_MAX_TOKENS,
+            timeout=self.FALLBACK_LLM_TIMEOUT
+        )
 
 
 # Global settings instance
