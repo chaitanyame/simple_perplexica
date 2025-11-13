@@ -72,7 +72,7 @@ async def create_search_agent(
     tracer = LangfuseTracer(
         public_key=settings.LANGFUSE_PUBLIC_KEY,
         secret_key=settings.LANGFUSE_SECRET_KEY,
-        base_url=settings.LANGFUSE_BASE_URL,
+        host=settings.LANGFUSE_BASE_URL,
     )
 
     # Initialize LLM client with DeepSeek R1 for search

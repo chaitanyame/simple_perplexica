@@ -350,7 +350,7 @@ async def _generate_answer(
     tracer = LangfuseTracer(
         public_key=settings.LANGFUSE_PUBLIC_KEY,
         secret_key=settings.LANGFUSE_SECRET_KEY,
-        base_url=settings.LANGFUSE_BASE_URL,
+        host=settings.LANGFUSE_BASE_URL,
     )
     # Prepare context from chunks
     context_parts = []
