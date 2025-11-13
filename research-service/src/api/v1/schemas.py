@@ -374,3 +374,150 @@ class HealthResponse(BaseModel):
     status: Literal["healthy", "degraded", "unhealthy"] = Field(..., description="Service status")
     version: str = Field(..., description="Service version")
     timestamp: datetime = Field(default_factory=datetime.utcnow, description="Check timestamp")
+
+
+# ============================================================================
+# Document Upload & Query Schemas
+# ============================================================================
+
+
+class DocumentUploadResponse(BaseModel):
+    """Response model for document upload.
+
+    Attributes:
+        document_id: UUID of uploaded document
+        filename: Original filename
+        source_type: Document type (pdf/word/excel/text)
+        collection: Collection name the document belongs to
+        chunks_created: Number of text chunks created
+        embedding_dimension: Dimension of embeddings
+        status: Upload status
+        message: Status message
+    """
+
+    document_id: uuid.UUID = Field(..., description="Document UUID")
+    filename: str = Field(..., description="Original filename")
+    source_type: str = Field(..., description="Document type")
+    collection: str = Field(..., description="Collection name")
+    chunks_created: int = Field(..., description="Number of chunks created")
+    embedding_dimension: int = Field(384, description="Embedding vector dimension")
+    status: Literal["success", "partial", "failed"] = Field(..., description="Upload status")
+    message: str = Field(..., description="Status message")
+
+
+class DocumentQueryRequest(BaseModel):
+    """Request model for querying uploaded documents.
+
+    Attributes:
+        query: Question to ask about documents
+        collection: Collection to search (default 'default')
+        top_k: Number of relevant chunks to retrieve (5-50, default 10)
+        similarity_threshold: Minimum similarity score (0.0-1.0, default 0.3)
+        model: LLM model for answer generation (optional)
+    """
+
+    query: str = Field(
+        ...,
+        min_length=1,
+        max_length=1000,
+        description="Question about uploaded documents",
+        examples=["What are the key findings in the research paper?"],
+    )
+    collection: str = Field(
+        "default",
+        min_length=1,
+        max_length=100,
+        description="Collection name to search in",
+    )
+    top_k: int = Field(
+        10,
+        ge=5,
+        le=50,
+        description="Number of relevant document chunks to retrieve",
+    )
+    similarity_threshold: float = Field(
+        0.3,
+        ge=0.0,
+        le=1.0,
+        description="Minimum similarity score for chunk retrieval",
+    )
+    model: str | None = Field(
+        None,
+        description="LLM model to use for answer generation (defaults to RESEARCH_LLM_MODEL)",
+    )
+
+
+class DocumentQueryResponse(BaseModel):
+    """Response model for document query.
+
+    Attributes:
+        query: Original query
+        answer: Generated answer
+        sources: Document chunks used for answer
+        total_chunks_found: Total chunks above similarity threshold
+        chunks_used: Number of chunks used for answer
+        execution_time: Query execution time in seconds
+    """
+
+    query: str = Field(..., description="Original query")
+    answer: str = Field(..., description="Generated answer from documents")
+    sources: list[dict[str, Any]] = Field(
+        ..., description="Source chunks with content, metadata, and scores"
+    )
+    total_chunks_found: int = Field(..., description="Total chunks above similarity threshold")
+    chunks_used: int = Field(..., description="Chunks used for answer generation")
+    execution_time: float = Field(..., description="Execution time in seconds")
+
+
+class DocumentListItem(BaseModel):
+    """Model for a single document in list response.
+
+    Attributes:
+        document_id: Document UUID
+        filename: Original filename
+        source_type: Document type
+        collection: Collection name
+        chunks_count: Number of chunks
+        created_at: Upload timestamp
+        last_accessed: Last access timestamp
+        access_count: Number of times accessed
+    """
+
+    document_id: uuid.UUID = Field(..., description="Document UUID")
+    filename: str = Field(..., description="Original filename")
+    source_type: str = Field(..., description="Document type")
+    collection: str = Field(..., description="Collection name")
+    chunks_count: int = Field(..., description="Number of text chunks")
+    created_at: datetime = Field(..., description="Upload timestamp")
+    last_accessed: datetime | None = Field(None, description="Last access time")
+    access_count: int = Field(0, description="Access count")
+
+
+class DocumentListResponse(BaseModel):
+    """Response model for listing documents.
+
+    Attributes:
+        documents: List of documents
+        total_count: Total number of documents
+        collection: Collection filter (if applied)
+    """
+
+    documents: list[DocumentListItem] = Field(..., description="List of documents")
+    total_count: int = Field(..., description="Total document count")
+    collection: str | None = Field(None, description="Filtered collection")
+
+
+class DocumentDeleteResponse(BaseModel):
+    """Response model for document deletion.
+
+    Attributes:
+        document_id: Deleted document UUID
+        chunks_deleted: Number of chunks deleted
+        status: Deletion status
+        message: Status message
+    """
+
+    document_id: uuid.UUID = Field(..., description="Deleted document UUID")
+    chunks_deleted: int = Field(..., description="Number of chunks deleted")
+    status: Literal["success", "not_found", "error"] = Field(..., description="Deletion status")
+    message: str = Field(..., description="Status message")

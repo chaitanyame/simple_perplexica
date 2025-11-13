@@ -62,7 +62,7 @@ class RAGDocument(Base):
     source_type: Mapped[str] = mapped_column(
         String(20), nullable=False, index=True
     )  # 'web', 'pdf', 'excel', 'word'
-    doc_metadata: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    doc_metadata: Mapped[dict[str, Any] | None] = mapped_column("doc_metadata", JSON, nullable=True)
     embedding: Mapped[Any] = mapped_column(Vector(384), nullable=False)
     token_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)

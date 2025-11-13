@@ -31,7 +31,7 @@ def main():
     # Sidebar
     with st.sidebar:
         st.header("⚙️ Settings")
-        mode = st.radio("Mode", ["Search", "Research"], index=0)
+        mode = st.radio("Mode", ["Search", "Research", "Document Library"], index=0)
 
         st.subheader("🔍 Search Engine")
         search_engine = st.radio(
@@ -168,8 +168,10 @@ def main():
     # Main content
     if mode == "Search":
         render_search_mode(max_sources, timeout, model, selected_mode, selected_engine, selected_prompt_strategy)
-    else:
+    elif mode == "Research":
         render_research_mode(max_iterations, timeout, model, selected_mode, selected_engine, selected_prompt_strategy)
+    else:
+        render_document_library_mode()
 
 
 def render_search_mode(max_sources: int, timeout: int, model: str, mode: str, search_engine: str, prompt_strategy: str):
@@ -423,6 +425,302 @@ def render_research_result(data: dict):
             file_name=f"research_{data.get('session_id')}.json",
             mime="application/json",
         )
+
+
+def render_document_library_mode():
+    """Render document library interface for upload, query, list, and delete."""
+    st.header("📄 Document Library")
+    st.write("Upload documents (PDF, Word, Excel, Text) and ask questions using RAG")
+
+    # Initialize session state for documents
+    if "documents" not in st.session_state:
+        st.session_state.documents = []
+    if "query_results" not in st.session_state:
+        st.session_state.query_results = []
+
+    # Create tabs for different operations
+    tab1, tab2, tab3 = st.tabs(["📤 Upload", "🔍 Query Documents", "📚 My Documents"])
+
+    # Tab 1: Upload Documents
+    with tab1:
+        st.subheader("Upload Document")
+        
+        col1, col2 = st.columns([2, 1])
+        with col1:
+            uploaded_file = st.file_uploader(
+                "Choose a file",
+                type=["pdf", "docx", "xlsx", "txt"],
+                help="Supported formats: PDF, Word (.docx), Excel (.xlsx), Text (.txt)",
+            )
+        with col2:
+            collection = st.text_input(
+                "Collection",
+                value="default",
+                help="Group documents by collection name",
+            )
+
+        if st.button("📤 Upload Document", type="primary", disabled=uploaded_file is None):
+            if uploaded_file:
+                with st.spinner(f"Uploading {uploaded_file.name}..."):
+                    try:
+                        # Prepare multipart form data
+                        files = {"file": (uploaded_file.name, uploaded_file.getvalue(), uploaded_file.type)}
+                        data = {"collection": collection}
+                        
+                        response = httpx.post(
+                            f"{API_BASE_URL}/v1/documents/upload",
+                            files=files,
+                            data=data,
+                            timeout=120.0,
+                        )
+
+                        if response.status_code == 201:
+                            result = response.json()
+                            st.success(
+                                f"✅ **{result['filename']}** uploaded successfully!\n\n"
+                                f"📄 Document ID: `{result['document_id']}`\n\n"
+                                f"📦 Chunks: {result['chunks_created']} | "
+                                f"🧮 Dimensions: {result['embedding_dimension']} | "
+                                f"📁 Collection: {result['collection']}"
+                            )
+                            # Refresh documents list
+                            st.session_state.documents = []
+                        else:
+                            error_data = response.json()
+                            st.error(f"❌ Upload failed: {error_data.get('detail', 'Unknown error')}")
+
+                    except Exception as e:
+                        st.error(f"❌ Upload failed: {str(e)}")
+
+        st.divider()
+        st.info(
+            "📋 **Supported Features:**\n\n"
+            "✅ **PDF** - Extracts text, tables, and images\n\n"
+            "✅ **Word (.docx)** - Full text extraction\n\n"
+            "✅ **Excel (.xlsx)** - Converts tables to markdown\n\n"
+            "✅ **Text (.txt)** - Direct text processing\n\n"
+            "**Processing:**\n"
+            "- Automatic chunking (1000 chars, 200 overlap)\n"
+            "- Vector embeddings (384D)\n"
+            "- Deduplication by content hash\n"
+            "- Max file size: 50MB"
+        )
+
+    # Tab 2: Query Documents
+    with tab2:
+        st.subheader("Ask Questions")
+        
+        col1, col2 = st.columns([2, 1])
+        with col1:
+            query = st.text_input(
+                "Your question",
+                placeholder="What are the key findings in the research paper?",
+                key="doc_query",
+            )
+        with col2:
+            query_collection = st.text_input(
+                "Collection",
+                value="default",
+                key="query_collection",
+                help="Query documents from specific collection",
+            )
+
+        col3, col4, col5 = st.columns(3)
+        with col3:
+            top_k = st.slider("Top K chunks", 5, 20, 10, help="Number of relevant chunks to retrieve")
+        with col4:
+            similarity_threshold = st.slider(
+                "Similarity threshold",
+                0.0,
+                1.0,
+                0.3,
+                step=0.05,
+                help="Minimum similarity score (0-1)",
+            )
+        with col5:
+            st.write("")  # Spacer
+            query_btn = st.button("🔍 Ask", type="primary", use_container_width=True)
+
+        if query_btn and query:
+            with st.spinner("Searching documents..."):
+                try:
+                    response = httpx.post(
+                        f"{API_BASE_URL}/v1/documents/query",
+                        json={
+                            "query": query,
+                            "collection": query_collection,
+                            "top_k": top_k,
+                            "similarity_threshold": similarity_threshold,
+                        },
+                        timeout=60.0,
+                    )
+
+                    if response.status_code == 200:
+                        result = response.json()
+                        
+                        # Display answer
+                        st.markdown("### 📝 Answer")
+                        st.markdown(result["answer"])
+                        
+                        # Display metadata
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("⏱️ Time", f"{result['execution_time']:.2f}s")
+                        with col2:
+                            st.metric("📄 Chunks Found", result["total_chunks_found"])
+                        with col3:
+                            st.metric("📊 Chunks Used", result["chunks_used"])
+                        
+                        # Display sources
+                        st.markdown("### 📚 Sources")
+                        for idx, source in enumerate(result["sources"], 1):
+                            with st.expander(
+                                f"[{idx}] {source.get('metadata', {}).get('filename', 'Unknown')} "
+                                f"(Similarity: {source.get('similarity', 0):.3f})",
+                                expanded=False
+                            ):
+                                st.markdown(f"**Content:**")
+                                st.text(source["content"])
+                                
+                                metadata = source.get("metadata", {})
+                                st.markdown(f"**Metadata:**")
+                                st.json({
+                                    "chunk_id": metadata.get("chunk_id"),
+                                    "collection": metadata.get("collection"),
+                                    "filename": metadata.get("filename"),
+                                })
+                        
+                        # Store result in session state
+                        st.session_state.query_results.insert(
+                            0,
+                            {
+                                "query": query,
+                                "result": result,
+                                "timestamp": datetime.now(),
+                            },
+                        )
+                        
+                    elif response.status_code == 404:
+                        st.warning(
+                            f"📭 No relevant documents found in collection '{query_collection}'.\n\n"
+                            "Try:\n"
+                            "- Uploading documents first\n"
+                            "- Lowering the similarity threshold\n"
+                            "- Checking the collection name"
+                        )
+                    else:
+                        error_data = response.json()
+                        st.error(f"❌ Query failed: {error_data.get('detail', 'Unknown error')}")
+
+                except Exception as e:
+                    st.error(f"❌ Query failed: {str(e)}")
+
+        # Display query history
+        if st.session_state.query_results:
+            st.divider()
+            st.markdown("### 📜 Query History")
+            
+            if st.button("🗑️ Clear History"):
+                st.session_state.query_results = []
+                st.rerun()
+            
+            for idx, item in enumerate(st.session_state.query_results[:5]):  # Show last 5
+                with st.expander(
+                    f"❓ {item['query'][:60]}... ({item['timestamp'].strftime('%H:%M:%S')})",
+                    expanded=False
+                ):
+                    st.markdown(f"**Answer:** {item['result']['answer'][:200]}...")
+                    st.caption(f"Sources: {item['result']['total_chunks_found']} | Time: {item['result']['execution_time']:.2f}s")
+
+    # Tab 3: My Documents
+    with tab3:
+        st.subheader("Document Management")
+        
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            list_collection = st.text_input(
+                "Filter by collection",
+                value="",
+                placeholder="Leave empty for all collections",
+                key="list_collection",
+            )
+        with col2:
+            st.write("")  # Spacer
+            if st.button("🔄 Refresh", use_container_width=True):
+                st.session_state.documents = []
+
+        # Fetch documents
+        if not st.session_state.documents or st.button("Load Documents", key="hidden_load"):
+            with st.spinner("Loading documents..."):
+                try:
+                    params = {}
+                    if list_collection:
+                        params["collection"] = list_collection
+                    
+                    response = httpx.get(
+                        f"{API_BASE_URL}/v1/documents",
+                        params=params,
+                        timeout=30.0,
+                    )
+
+                    if response.status_code == 200:
+                        result = response.json()
+                        st.session_state.documents = result.get("documents", [])
+                    else:
+                        st.error("Failed to load documents")
+
+                except Exception as e:
+                    st.error(f"❌ Failed to load documents: {str(e)}")
+
+        # Display documents
+        if st.session_state.documents:
+            st.info(f"📊 Total documents: {len(st.session_state.documents)}")
+            
+            for doc in st.session_state.documents:
+                with st.container():
+                    col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
+                    
+                    with col1:
+                        st.markdown(f"**📄 {doc['filename']}**")
+                        st.caption(
+                            f"Collection: {doc['collection']} | "
+                            f"Type: {doc['source_type']} | "
+                            f"Chunks: {doc['chunks_count']}"
+                        )
+                    
+                    with col2:
+                        st.caption(f"Created: {doc['created_at'][:10]}")
+                    
+                    with col3:
+                        if doc.get('access_count', 0) > 0:
+                            st.caption(f"📊 {doc['access_count']} queries")
+                    
+                    with col4:
+                        if st.button("🗑️", key=f"delete_{doc['document_id']}", help="Delete document"):
+                            with st.spinner("Deleting..."):
+                                try:
+                                    response = httpx.delete(
+                                        f"{API_BASE_URL}/v1/documents/{doc['document_id']}",
+                                        timeout=30.0,
+                                    )
+
+                                    if response.status_code == 200:
+                                        st.success(f"✅ Deleted {doc['filename']}")
+                                        st.session_state.documents = []
+                                        st.rerun()
+                                    else:
+                                        error_data = response.json()
+                                        st.error(f"❌ Delete failed: {error_data.get('detail', 'Unknown error')}")
+
+                                except Exception as e:
+                                    st.error(f"❌ Delete failed: {str(e)}")
+                    
+                    st.divider()
+        else:
+            st.info(
+                "📭 No documents found.\n\n"
+                "Upload documents in the **Upload** tab to get started!"
+            )
 
 
 if __name__ == "__main__":

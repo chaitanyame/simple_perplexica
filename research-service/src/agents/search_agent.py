@@ -609,13 +609,14 @@ Respond with valid JSON only."""
                     logger.info("✅ SearxNG success (primary attempt)", count=len(searx_results))
                     return [
                         SearchSource(
-                            title=r.get("title", ""),
-                            url=r.get("url", ""),
-                            snippet=r.get("content", ""),
+                            title=r.get("title", "") if isinstance(r, dict) else "",
+                            url=r.get("url", "") if isinstance(r, dict) else "",
+                            snippet=r.get("content", "") if isinstance(r, dict) else "",
                             relevance=0.7,
                             source_type="web",
                         )
                         for r in searx_results
+                        if r is not None and isinstance(r, dict)
                     ]
                 logger.warning("SearxNG returned 0 results (primary); evaluating retry conditions")
 
@@ -635,13 +636,14 @@ Respond with valid JSON only."""
                         logger.info("✅ SearxNG success (year heuristic)", count=len(searx_year_results))
                         return [
                             SearchSource(
-                                title=r.get("title", ""),
-                                url=r.get("url", ""),
-                                snippet=r.get("content", ""),
+                                title=r.get("title", "") if isinstance(r, dict) else "",
+                                url=r.get("url", "") if isinstance(r, dict) else "",
+                                snippet=r.get("content", "") if isinstance(r, dict) else "",
                                 relevance=0.7,
                                 source_type="web",
                             )
                             for r in searx_year_results
+                            if r is not None and isinstance(r, dict)
                         ]
                     else:
                         logger.warning("SearxNG year heuristic yielded 0 results")
@@ -662,13 +664,14 @@ Respond with valid JSON only."""
                     logger.info("✅ SearxNG success (expanded retry)", count=len(searx_retry_results))
                     return [
                         SearchSource(
-                            title=r.get("title", ""),
-                            url=r.get("url", ""),
-                            snippet=r.get("content", ""),
+                            title=r.get("title", "") if isinstance(r, dict) else "",
+                            url=r.get("url", "") if isinstance(r, dict) else "",
+                            snippet=r.get("content", "") if isinstance(r, dict) else "",
                             relevance=0.65,  # Slightly lower relevance due to broadened scope
                             source_type="web",
                         )
                         for r in searx_retry_results
+                        if r is not None and isinstance(r, dict)
                     ]
                 else:
                     logger.warning("SearxNG expanded retry returned 0 results; proceeding to fallback")
@@ -702,18 +705,19 @@ Respond with valid JSON only."""
                 logger.info("SearxNG response status", status=response.status_code)
                 if response.status_code == 200:
                     data = response.json()
-                    results = data.get("results", [])
+                    results = data.get("results", []) if data else []
                     if results:
                         logger.info("✅ SearxNG success", count=len(results))
                         return [
                             SearchSource(
-                                title=r.get("title", ""),
-                                url=r.get("url", ""),
-                                snippet=r.get("content", ""),
+                                title=r.get("title", "") if isinstance(r, dict) else "",
+                                url=r.get("url", "") if isinstance(r, dict) else "",
+                                snippet=r.get("content", "") if isinstance(r, dict) else "",
                                 relevance=0.7,
                                 source_type="web",
                             )
                             for r in results
+                            if r is not None and isinstance(r, dict)
                         ]
                     else:
                         logger.warning("SearxNG returned 0 results; will consider fallback")
