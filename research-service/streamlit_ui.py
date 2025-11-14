@@ -173,9 +173,8 @@ def main():
             "Model",
             [
                 "google/gemini-2.0-flash-exp:free",
-                "deepseek/deepseek-r1:free",
-                "deepseek/deepseek-chat",
                 "google/gemini-2.5-flash-lite",
+                "deepseek/deepseek-chat",
             ],
             index=0,
         )

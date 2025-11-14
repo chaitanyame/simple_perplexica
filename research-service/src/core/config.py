@@ -163,8 +163,8 @@ class Settings(BaseSettings):
     # Research LLM (Primary, User-Facing)
     RESEARCH_LLM_PROVIDER: str = Field(default="openrouter", description="Research LLM provider")
     RESEARCH_LLM_MODEL: str = Field(
-        default="deepseek/deepseek-r1:free",
-        description="Research LLM model (DeepSeek R1 free for reasoning)",
+        default="google/gemini-2.0-flash-exp:free",
+        description="Research LLM model (Gemini 2.0 Flash free with good reasoning)",
     )
     RESEARCH_LLM_TEMPERATURE: float = Field(
         default=0.3, ge=0.0, le=2.0, description="Research LLM temperature"

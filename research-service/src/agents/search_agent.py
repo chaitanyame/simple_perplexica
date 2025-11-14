@@ -2519,12 +2519,12 @@ Write a detailed answer with full explanations for everything:"""
 Generate the corrected answer:"""
 
                             try:
-                                # Use DeepSeek R1 for reasoning-intensive correction
+                                # Use Gemini 2.0 Flash for hallucination correction (more reliable than DeepSeek R1)
                                 regeneration_response = await self._run_llm_chat(
                                     messages=[{"role": "user", "content": regeneration_prompt}],
                                     temperature=0.3,  # Lower for accuracy
                                     max_tokens=2048,
-                                    model_override="deepseek/deepseek-r1:free",  # Use R1 for regeneration
+                                    model_override="google/gemini-2.0-flash-exp:free",  # Gemini for regeneration
                                 )
 
                                 if (

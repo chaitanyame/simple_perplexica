@@ -6,7 +6,7 @@ services:
     environment:
       POSTGRES_DB: research_db
       POSTGRES_USER: research_user
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-research_password}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     ports:
       - "5433:5432"  # Use 5433 externally to avoid conflicts
     volumes:
@@ -46,7 +46,7 @@ services:
       - "8001:8000"  # Use 8001 externally to avoid conflict with other services
     environment:
       # Database
-      DATABASE_URL: postgresql+asyncpg://research_user:${POSTGRES_PASSWORD:-research_password}@postgres:5432/research_db
+      DATABASE_URL: postgresql+asyncpg://research_user:${POSTGRES_PASSWORD}@postgres:5432/research_db
       
       # Redis
       REDIS_URL: redis://redis:6379/0
@@ -55,32 +55,32 @@ services:
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
       LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY}
       LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY}
-      LANGFUSE_BASE_URL: ${LANGFUSE_BASE_URL:-https://cloud.langfuse.com}
+      LANGFUSE_BASE_URL: ${LANGFUSE_BASE_URL}
       
       # Search (reuse from main app if available)
       # Connect to SearXNG container via Docker network
-      SEARXNG_BASE_URL: ${SEARXNG_BASE_URL:-http://searxng:8080}
-      SERPER_API_KEY: ${SERPER_API_KEY:-}
+      SEARXNG_BASE_URL: ${SEARXNG_BASE_URL}
+      SERPER_API_KEY: ${SERPER_API_KEY}
       
       # Perplexity AI (Fallback Search)
-      PERPLEXITY_API_KEY: ${PERPLEXITY_API_KEY:-}
-      PERPLEXITY_MODEL: ${PERPLEXITY_MODEL:-sonar}
-      PERPLEXITY_TIMEOUT: ${PERPLEXITY_TIMEOUT:-60}
-      PERPLEXITY_CIRCUIT_BREAKER_THRESHOLD: ${PERPLEXITY_CIRCUIT_BREAKER_THRESHOLD:-5}
-      PERPLEXITY_CIRCUIT_BREAKER_TIMEOUT: ${PERPLEXITY_CIRCUIT_BREAKER_TIMEOUT:-300}
-      ENABLE_SEARCH_FALLBACK: ${ENABLE_SEARCH_FALLBACK:-true}
+      PERPLEXITY_API_KEY: ${PERPLEXITY_API_KEY}
+      PERPLEXITY_MODEL: ${PERPLEXITY_MODEL}
+      PERPLEXITY_TIMEOUT: ${PERPLEXITY_TIMEOUT}
+      PERPLEXITY_CIRCUIT_BREAKER_THRESHOLD: ${PERPLEXITY_CIRCUIT_BREAKER_THRESHOLD}
+      PERPLEXITY_CIRCUIT_BREAKER_TIMEOUT: ${PERPLEXITY_CIRCUIT_BREAKER_TIMEOUT}
+      ENABLE_SEARCH_FALLBACK: ${ENABLE_SEARCH_FALLBACK}
       
       # LLM Model Configuration
-      LLM_MODEL: ${LLM_MODEL:-google/gemini-2.0-flash-exp:free}
-      RESEARCH_LLM_MODEL: ${RESEARCH_LLM_MODEL:-deepseek/deepseek-r1:free}
-      RESEARCH_LLM_TEMPERATURE: ${RESEARCH_LLM_TEMPERATURE:-0.3}
-      RESEARCH_LLM_MAX_TOKENS: ${RESEARCH_LLM_MAX_TOKENS:-8192}
-      RESEARCH_LLM_TIMEOUT: ${RESEARCH_LLM_TIMEOUT:-180}
-      FALLBACK_LLM_MODEL: ${FALLBACK_LLM_MODEL:-google/gemini-2.0-flash-thinking-exp:free}
-      SYNTHESIS_LLM_MODEL: ${SYNTHESIS_LLM_MODEL:-}
+      LLM_MODEL: ${LLM_MODEL}
+      RESEARCH_LLM_MODEL: ${RESEARCH_LLM_MODEL}
+      RESEARCH_LLM_TEMPERATURE: ${RESEARCH_LLM_TEMPERATURE}
+      RESEARCH_LLM_MAX_TOKENS: ${RESEARCH_LLM_MAX_TOKENS}
+      RESEARCH_LLM_TIMEOUT: ${RESEARCH_LLM_TIMEOUT}
+      FALLBACK_LLM_MODEL: ${FALLBACK_LLM_MODEL}
+      SYNTHESIS_LLM_MODEL: ${SYNTHESIS_LLM_MODEL}
       
       # Prompt Strategy (Phase 4 - Configurable Prompts)
-      ENABLE_DYNAMIC_PROMPTS: ${ENABLE_DYNAMIC_PROMPTS:-true}
+      ENABLE_DYNAMIC_PROMPTS: ${ENABLE_DYNAMIC_PROMPTS}
       
       # PyTorch/HuggingFace Settings (fix Dockling issues)
       TOKENIZERS_PARALLELISM: "false"
@@ -88,8 +88,8 @@ services:
       MKL_NUM_THREADS: "1"
       
       # App settings
-      LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      API_RATE_LIMIT: ${API_RATE_LIMIT:-10/minute}
+      LOG_LEVEL: ${LOG_LEVEL}
+      API_RATE_LIMIT: ${API_RATE_LIMIT}
     depends_on:
       postgres:
         condition: service_healthy

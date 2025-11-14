@@ -302,31 +302,9 @@ class OpenRouterClient:
         for attempt in range(self.max_retries + 1):
             try:
                 return await fn()
-            except APIError as e:
-                last_error = e
-                # Don't retry on 400 Bad Request
-                if hasattr(e, "status_code") and e.status_code == 400:
-                    logger.error(f"Bad request error: {e}")
-                    raise LLMClientError(f"Bad request: {e}") from e
-
-                if attempt < self.max_retries:
-                    logger.warning(
-                        f"Retry attempt {attempt + 1}/{self.max_retries} after error: {e}"
-                    )
-                    await self._sleep_with_backoff(delay, attempt)
-                    delay = min(delay * self.exponential_base, self.max_delay)
-
-            except APITimeoutError as e:
-                last_error = e
-                if attempt < self.max_retries:
-                    logger.warning(
-                        f"Timeout on attempt {attempt + 1}/{self.max_retries}, retrying..."
-                    )
-                    await self._sleep_with_backoff(delay, attempt)
-                    delay = min(delay * self.exponential_base, self.max_delay)
-                else:
-                    raise LLMClientError(f"Request timeout after {self.max_retries} retries") from e
-
+            
+            # IMPORTANT: Handle specific exceptions BEFORE general APIError
+            # RateLimitError and APITimeoutError are subclasses of APIError
             except RateLimitError as e:
                 last_error = e
                 # After 2 rate limit retries, switch to fallback model
@@ -358,6 +336,31 @@ class OpenRouterClient:
                     raise LLMClientError(
                         f"Rate limit exceeded after {self.max_retries} retries"
                     ) from e
+
+            except APITimeoutError as e:
+                last_error = e
+                if attempt < self.max_retries:
+                    logger.warning(
+                        f"Timeout on attempt {attempt + 1}/{self.max_retries}, retrying..."
+                    )
+                    await self._sleep_with_backoff(delay, attempt)
+                    delay = min(delay * self.exponential_base, self.max_delay)
+                else:
+                    raise LLMClientError(f"Request timeout after {self.max_retries} retries") from e
+
+            except APIError as e:
+                last_error = e
+                # Don't retry on 400 Bad Request
+                if hasattr(e, "status_code") and e.status_code == 400:
+                    logger.error(f"Bad request error: {e}")
+                    raise LLMClientError(f"Bad request: {e}") from e
+
+                if attempt < self.max_retries:
+                    logger.warning(
+                        f"Retry attempt {attempt + 1}/{self.max_retries} after error: {e}"
+                    )
+                    await self._sleep_with_backoff(delay, attempt)
+                    delay = min(delay * self.exponential_base, self.max_delay)
 
         # If we get here, all retries exhausted
         raise LLMClientError(
