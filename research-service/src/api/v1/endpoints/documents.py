@@ -381,10 +381,10 @@ async def _generate_answer(
 
 **Answer:**"""
 
-    # Generate answer with LLM - Use Claude for better reliability
+    # Generate answer with LLM - Use Gemini 2.0 Flash (FREE, 1M context)
     llm_client = OpenRouterClient(
         api_key=settings.OPENROUTER_API_KEY,
-        model="anthropic/claude-3.5-sonnet",  # More reliable than free DeepSeek
+        model="google/gemini-2.0-flash-exp:free",  # FREE with 1M token context window
         tracer=tracer,
     )
 

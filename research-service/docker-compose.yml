@@ -70,8 +70,14 @@ services:
       PERPLEXITY_CIRCUIT_BREAKER_TIMEOUT: ${PERPLEXITY_CIRCUIT_BREAKER_TIMEOUT:-300}
       ENABLE_SEARCH_FALLBACK: ${ENABLE_SEARCH_FALLBACK:-true}
       
-      # LLM Model
-      LLM_MODEL: ${LLM_MODEL:-anthropic/claude-3.5-sonnet}
+      # LLM Model Configuration
+      LLM_MODEL: ${LLM_MODEL:-google/gemini-2.0-flash-exp:free}
+      RESEARCH_LLM_MODEL: ${RESEARCH_LLM_MODEL:-deepseek/deepseek-r1:free}
+      RESEARCH_LLM_TEMPERATURE: ${RESEARCH_LLM_TEMPERATURE:-0.3}
+      RESEARCH_LLM_MAX_TOKENS: ${RESEARCH_LLM_MAX_TOKENS:-8192}
+      RESEARCH_LLM_TIMEOUT: ${RESEARCH_LLM_TIMEOUT:-180}
+      FALLBACK_LLM_MODEL: ${FALLBACK_LLM_MODEL:-google/gemini-2.0-flash-thinking-exp:free}
+      SYNTHESIS_LLM_MODEL: ${SYNTHESIS_LLM_MODEL:-}
       
       # Prompt Strategy (Phase 4 - Configurable Prompts)
       ENABLE_DYNAMIC_PROMPTS: ${ENABLE_DYNAMIC_PROMPTS:-true}

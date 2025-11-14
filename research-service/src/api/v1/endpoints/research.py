@@ -251,12 +251,17 @@ async def research(
         # Use request parameter or mode default for timeout
         timeout = request.timeout if request.timeout is not None else config.timeout
 
+        # Ensure timeout is a valid number (default to 300s if still None)
+        if timeout is None:
+            timeout = 300.0
+        timeout = float(timeout)
+
         # Create ResearchAgent
         agent = await create_research_agent(
             db=db,
             model=request.model,
             max_iterations=request.max_iterations,
-            timeout=float(timeout),
+            timeout=timeout,
         )
 
         # Execute research with timeout, mode, and prompt strategy, traced in Langfuse
@@ -278,7 +283,7 @@ async def research(
                         mode=search_mode,
                         prompt_strategy=request.prompt_strategy,
                     ),
-                    timeout=float(timeout),
+                    timeout=timeout,
                 )
         except TimeoutError:
             try:
@@ -290,7 +295,7 @@ async def research(
                 status_code=status.HTTP_504_GATEWAY_TIMEOUT,
                 content={
                     "error": "research_timeout",
-                    "message": f"Research exceeded timeout of {request.timeout}s",
+                    "message": f"Research exceeded timeout of {timeout}s",
                     "trace_id": agent.deps.tracer.get_trace_id(trace)
                     if agent.deps.tracer
                     else None,

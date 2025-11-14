@@ -69,7 +69,7 @@ class OpenRouterClient:
         self,
         api_key: str | None = None,
         base_url: str = "https://openrouter.ai/api/v1",
-        model: str = "anthropic/claude-3.5-sonnet",
+        model: str = "google/gemini-2.0-flash-exp:free",
         max_retries: int = 10,
         max_delay: float = 300.0,
         exponential_base: float = 2.0,
@@ -329,6 +329,25 @@ class OpenRouterClient:
 
             except RateLimitError as e:
                 last_error = e
+                # After 2 rate limit retries, switch to fallback model
+                if attempt >= 2 and self.model != "google/gemini-2.0-flash-exp:free":
+                    logger.warning(
+                        f"🔄 RATE LIMIT FALLBACK: Switching from {self.model} to google/gemini-2.0-flash-exp:free after {attempt + 1} attempts"
+                    )
+                    original_model = self.model
+                    self.model = "google/gemini-2.0-flash-exp:free"
+                    try:
+                        result = await fn()
+                        logger.info(
+                            f"✅ FALLBACK SUCCESS: google/gemini-2.0-flash-exp:free worked, restoring {original_model}"
+                        )
+                        self.model = original_model
+                        return result
+                    except Exception as fallback_error:
+                        self.model = original_model
+                        logger.error(f"❌ Fallback model also failed: {fallback_error}")
+                        # Continue with normal retry logic
+
                 if attempt < self.max_retries:
                     logger.warning(
                         f"Rate limit hit on attempt {attempt + 1}/{self.max_retries}, backing off..."

@@ -6,7 +6,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class LLMConfig(BaseModel):
     """Configuration for a specific LLM.
-    
+
     Attributes:
         provider: LLM provider (openrouter, openai, etc.)
         model: Model identifier (e.g., 'deepseek/deepseek-r1:free')
@@ -130,107 +130,82 @@ class Settings(BaseSettings):
         default="sentence-transformers/all-MiniLM-L6-v2", description="Local embedding model name"
     )
     EMBEDDING_DIMENSION: int = Field(default=384, description="Embedding vector dimension")
-    
+
     # Reranking Settings
     RERANKER_MODEL: str = Field(
         default="cross-encoder/ms-marco-MiniLM-L-6-v2",
-        description="Cross-encoder model for semantic reranking"
+        description="Cross-encoder model for semantic reranking",
     )
     ENABLE_RERANKING: bool = Field(
-        default=True,
-        description="Enable semantic reranking with cross-encoder"
+        default=True, description="Enable semantic reranking with cross-encoder"
     )
     RERANK_WEIGHT: float = Field(
         default=0.6,
         ge=0.0,
         le=1.0,
-        description="Weight for semantic score in final ranking (0.0-1.0)"
+        description="Weight for semantic score in final ranking (0.0-1.0)",
     )
 
     # LLM Models (Legacy - kept for backward compatibility)
     LLM_MODEL: str = Field(
-        default="anthropic/claude-3.5-sonnet", description="Primary LLM model for synthesis"
+        default="google/gemini-2.0-flash-exp:free",
+        description="Primary LLM model for synthesis (FREE)",
     )
     PLANNING_MODEL: str = Field(
-        default="anthropic/claude-3.5-sonnet",
-        description="LLM model for planning and decomposition",
+        default="google/gemini-2.0-flash-exp:free",
+        description="LLM model for planning and decomposition (FREE)",
     )
-    
+
     # ========================================
     # Dynamic LLM Configuration (New)
     # ========================================
-    
+
     # Research LLM (Primary, User-Facing)
-    RESEARCH_LLM_PROVIDER: str = Field(
-        default="openrouter",
-        description="Research LLM provider"
-    )
+    RESEARCH_LLM_PROVIDER: str = Field(default="openrouter", description="Research LLM provider")
     RESEARCH_LLM_MODEL: str = Field(
         default="deepseek/deepseek-r1:free",
-        description="Research LLM model (DeepSeek R1 free for reasoning)"
+        description="Research LLM model (DeepSeek R1 free for reasoning)",
     )
     RESEARCH_LLM_TEMPERATURE: float = Field(
-        default=0.3,
-        ge=0.0,
-        le=2.0,
-        description="Research LLM temperature"
+        default=0.3, ge=0.0, le=2.0, description="Research LLM temperature"
     )
     RESEARCH_LLM_MAX_TOKENS: int = Field(
-        default=8192,
-        ge=100,
-        le=32000,
-        description="Research LLM max tokens"
+        default=8192, ge=100, le=32000, description="Research LLM max tokens"
     )
     RESEARCH_LLM_TIMEOUT: int = Field(
-        default=180,
-        ge=10,
-        le=600,
-        description="Research LLM timeout (R1 needs time for reasoning)"
+        default=180, ge=10, le=600, description="Research LLM timeout (R1 needs time for reasoning)"
     )
-    
+
     # Fallback LLM (Secondary)
-    FALLBACK_LLM_PROVIDER: str = Field(
-        default="openrouter",
-        description="Fallback LLM provider"
-    )
+    FALLBACK_LLM_PROVIDER: str = Field(default="openrouter", description="Fallback LLM provider")
     FALLBACK_LLM_MODEL: str = Field(
         default="google/gemini-2.0-flash-thinking-exp:free",
-        description="Fallback LLM model (Gemini free)"
+        description="Fallback LLM model (Gemini free)",
     )
     FALLBACK_LLM_TEMPERATURE: float = Field(
-        default=0.2,
-        ge=0.0,
-        le=2.0,
-        description="Fallback LLM temperature"
+        default=0.2, ge=0.0, le=2.0, description="Fallback LLM temperature"
     )
     FALLBACK_LLM_MAX_TOKENS: int = Field(
-        default=4096,
-        ge=100,
-        le=32000,
-        description="Fallback LLM max tokens"
+        default=4096, ge=100, le=32000, description="Fallback LLM max tokens"
     )
     FALLBACK_LLM_TIMEOUT: int = Field(
-        default=120,
-        ge=10,
-        le=600,
-        description="Fallback LLM timeout"
+        default=120, ge=10, le=600, description="Fallback LLM timeout"
     )
-    
+
     # Synthesis LLM (Optional - for final answer generation)
     # If not set, uses RESEARCH_LLM_MODEL
     SYNTHESIS_LLM_MODEL: str | None = Field(
         default=None,
-        description="Optional dedicated model for final synthesis/answer generation (e.g., google/gemini-2.5-flash-lite). If None, uses RESEARCH_LLM_MODEL"
+        description="Optional dedicated model for final synthesis/answer generation (e.g., google/gemini-2.5-flash-lite). If None, uses RESEARCH_LLM_MODEL",
     )
-    
+
     # Feature Flags
     ENABLE_DYNAMIC_PROMPTS: bool = Field(
         default=True,
-        description="Enable dynamic system prompt generation (pure logic, no LLM cost)"
+        description="Enable dynamic system prompt generation (pure logic, no LLM cost)",
     )
     ENABLE_LLM_FALLBACK: bool = Field(
-        default=True,
-        description="Enable fallback to secondary LLM on primary failure"
+        default=True, description="Enable fallback to secondary LLM on primary failure"
     )
 
     # API Configuration
@@ -249,15 +224,15 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore"
     )
-    
+
     # ========================================
     # Computed Properties for LLMConfig
     # ========================================
-    
+
     @property
     def research_llm_config(self) -> LLMConfig:
         """Get research LLM configuration.
-        
+
         Returns:
             LLMConfig for primary research LLM (DeepSeek R1)
         """
@@ -266,13 +241,13 @@ class Settings(BaseSettings):
             model=self.RESEARCH_LLM_MODEL,
             temperature=self.RESEARCH_LLM_TEMPERATURE,
             max_tokens=self.RESEARCH_LLM_MAX_TOKENS,
-            timeout=self.RESEARCH_LLM_TIMEOUT
+            timeout=self.RESEARCH_LLM_TIMEOUT,
         )
-    
+
     @property
     def fallback_llm_config(self) -> LLMConfig:
         """Get fallback LLM configuration.
-        
+
         Returns:
             LLMConfig for fallback LLM (Gemini)
         """
@@ -281,7 +256,7 @@ class Settings(BaseSettings):
             model=self.FALLBACK_LLM_MODEL,
             temperature=self.FALLBACK_LLM_TEMPERATURE,
             max_tokens=self.FALLBACK_LLM_MAX_TOKENS,
-            timeout=self.FALLBACK_LLM_TIMEOUT
+            timeout=self.FALLBACK_LLM_TIMEOUT,
         )
 
 

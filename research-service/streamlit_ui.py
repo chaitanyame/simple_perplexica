@@ -37,15 +37,15 @@ def main():
         search_engine = st.radio(
             "Select Search Backend",
             options=[
-                "🌐 SearXNG (Primary)", 
-                "🚀 SerperDev (Alternative)", 
+                "🌐 SearXNG (Primary)",
+                "🚀 SerperDev (Alternative)",
                 "🧠 Perplexity AI (Direct)",
-                "🔄 Auto (SearXNG + SerperDev + Perplexity Fallback)"
+                "🔄 Auto (SearXNG + SerperDev + Perplexity Fallback)",
             ],
             index=3,  # Default to Auto with full cascade
             help="Choose which search engine to use for fetching results",
         )
-        
+
         # Extract search engine preference
         engine_map = {
             "🌐 SearXNG (Primary)": "searxng",
@@ -54,14 +54,18 @@ def main():
             "🔄 Auto (SearXNG + SerperDev + Perplexity Fallback)": "auto",
         }
         selected_engine = engine_map[search_engine]
-        
+
         # Display engine info
         if selected_engine == "searxng":
-            st.caption("✅ Open-source metasearch engine\n🌍 Multiple search engines aggregated\n🔒 Privacy-focused")
+            st.caption(
+                "✅ Open-source metasearch engine\n🌍 Multiple search engines aggregated\n🔒 Privacy-focused"
+            )
         elif selected_engine == "serperdev":
             st.caption("✅ Google search API\n⚡ Fast and reliable\n📊 Rich metadata")
         elif selected_engine == "perplexity":
-            st.caption("✅ AI-powered search\n🤖 Direct answers with citations\n📝 Ready-to-use content")
+            st.caption(
+                "✅ AI-powered search\n🤖 Direct answers with citations\n📝 Ready-to-use content"
+            )
         else:
             st.caption("✅ Best of all worlds\n🔄 3-tier automatic fallback\n🛡️ Maximum redundancy")
 
@@ -72,7 +76,7 @@ def main():
             index=0,  # Default to Auto
             help="Choose how system prompts are generated",
         )
-        
+
         # Extract prompt strategy
         prompt_strategy_map = {
             "🤖 Auto (Config)": "auto",
@@ -80,14 +84,16 @@ def main():
             "✨ Dynamic (Context-Aware)": "dynamic",
         }
         selected_prompt_strategy = prompt_strategy_map[prompt_strategy_option]
-        
+
         # Display prompt strategy info
         if selected_prompt_strategy == "static":
             st.caption("✅ Fixed prompts\n⚡ Always fast\n🎯 Predictable results")
         elif selected_prompt_strategy == "dynamic":
             st.caption("✅ Query-aware prompts\n🎨 Context-optimized\n📊 Type & domain detection")
         else:
-            st.caption("✅ Uses ENABLE_DYNAMIC_PROMPTS setting\n⚙️ Default from config\n🔧 Change in .env")
+            st.caption(
+                "✅ Uses ENABLE_DYNAMIC_PROMPTS setting\n⚙️ Default from config\n🔧 Change in .env"
+            )
 
         st.subheader("Query Optimization")
         search_mode = st.radio(
@@ -96,7 +102,7 @@ def main():
             index=1,  # Default to BALANCED
             help="Choose the search mode based on your needs",
         )
-        
+
         # Extract mode string (speed, balanced, deep)
         mode_map = {
             "⚡ SPEED": "speed",
@@ -104,7 +110,7 @@ def main():
             "🔍 DEEP": "deep",
         }
         selected_mode = mode_map[search_mode]
-        
+
         # Display mode info
         mode_info = {
             "speed": {
@@ -126,7 +132,7 @@ def main():
                 "use_case": "Comprehensive research",
             },
         }
-        
+
         info = mode_info[selected_mode]
         st.info(
             f"**{info['sources']}** | **{info['timeout']}**\n\n"
@@ -144,16 +150,20 @@ def main():
             }
             default_sources = mode_defaults[selected_mode]["max_sources"]
             default_timeout = mode_defaults[selected_mode]["timeout"]
-            
+
             max_sources = st.slider(
-                "Max Sources (override)", 
-                5, 50, default_sources,
-                help=f"Leave at {default_sources} to use {selected_mode.upper()} mode default"
+                "Max Sources (override)",
+                5,
+                50,
+                default_sources,
+                help=f"Leave at {default_sources} to use {selected_mode.upper()} mode default",
             )
             timeout = st.slider(
-                "Timeout (s, override)", 
-                10, 300, default_timeout,
-                help=f"Leave at {default_timeout}s to use {selected_mode.upper()} mode default"
+                "Timeout (s, override)",
+                10,
+                300,
+                default_timeout,
+                help=f"Leave at {default_timeout}s to use {selected_mode.upper()} mode default",
             )
         else:
             max_iterations = st.slider("Max Iterations", 1, 5, 3)
@@ -161,20 +171,31 @@ def main():
 
         model = st.selectbox(
             "Model",
-            ["anthropic/claude-3.5-sonnet", "deepseek/deepseek-chat"],
+            [
+                "google/gemini-2.0-flash-exp:free",
+                "deepseek/deepseek-r1:free",
+                "deepseek/deepseek-chat",
+                "google/gemini-2.5-flash-lite",
+            ],
             index=0,
         )
 
     # Main content
     if mode == "Search":
-        render_search_mode(max_sources, timeout, model, selected_mode, selected_engine, selected_prompt_strategy)
+        render_search_mode(
+            max_sources, timeout, model, selected_mode, selected_engine, selected_prompt_strategy
+        )
     elif mode == "Research":
-        render_research_mode(max_iterations, timeout, model, selected_mode, selected_engine, selected_prompt_strategy)
+        render_research_mode(
+            max_iterations, timeout, model, selected_mode, selected_engine, selected_prompt_strategy
+        )
     else:
         render_document_library_mode()
 
 
-def render_search_mode(max_sources: int, timeout: int, model: str, mode: str, search_engine: str, prompt_strategy: str):
+def render_search_mode(
+    max_sources: int, timeout: int, model: str, mode: str, search_engine: str, prompt_strategy: str
+):
     """Render search interface."""
     st.header("🔎 Fast Search")
     st.write(f"Quick web search with multi-source aggregation (via {search_engine.upper()})")
@@ -205,7 +226,7 @@ def render_search_mode(max_sources: int, timeout: int, model: str, mode: str, se
                 }
                 default_sources = mode_defaults[mode]["max_sources"]
                 default_timeout = mode_defaults[mode]["timeout"]
-                
+
                 payload = {
                     "query": query,
                     "mode": mode,
@@ -218,14 +239,14 @@ def render_search_mode(max_sources: int, timeout: int, model: str, mode: str, se
                     payload["max_sources"] = max_sources
                 if timeout != default_timeout:
                     payload["timeout"] = timeout
-                
+
                 # Choose endpoint based on search engine
                 if search_engine == "perplexity":
                     endpoint = f"{API_BASE_URL}/v1/search/perplexity"
                     st.info("🧠 Using Perplexity AI for direct search with citations...")
                 else:
                     endpoint = f"{API_BASE_URL}/v1/search"
-                
+
                 response = httpx.post(
                     endpoint,
                     json=payload,
@@ -308,7 +329,14 @@ def render_search_result(data: dict):
         )
 
 
-def render_research_mode(max_iterations: int, timeout: int, model: str, mode: str, search_engine: str, prompt_strategy: str):
+def render_research_mode(
+    max_iterations: int,
+    timeout: int,
+    model: str,
+    mode: str,
+    search_engine: str,
+    prompt_strategy: str,
+):
     """Render research interface."""
     st.header("🔬 Deep Research")
     st.write(f"Comprehensive research with iterative synthesis (via {search_engine.upper()})")
@@ -385,10 +413,13 @@ def render_research_result(data: dict):
     if plan.get("steps"):
         st.markdown("**Research Steps:**")
         for step in plan["steps"]:
-            with st.expander(f"Step {step.get('step_number', 0)}: {step.get('description', 'N/A')}", expanded=False):
+            with st.expander(
+                f"Step {step.get('step_number', 0)}: {step.get('description', 'N/A')}",
+                expanded=False,
+            ):
                 st.markdown(f"**Search Query:** {step.get('search_query', 'N/A')}")
                 st.markdown(f"**Expected Outcome:** {step.get('expected_outcome', 'N/A')}")
-                if step.get('depends_on'):
+                if step.get("depends_on"):
                     st.markdown(f"**Depends On Steps:** {', '.join(map(str, step['depends_on']))}")
 
     # Findings (now a single string, not an array)
@@ -403,13 +434,19 @@ def render_research_result(data: dict):
     with col2:
         st.metric("Confidence", f"{data.get('confidence', 0):.2%}")
     with col3:
-        st.metric("Model", data.get('model_used', 'N/A').split('/')[-1])
+        st.metric("Model", data.get("model_used", "N/A").split("/")[-1])
 
     # Citations
     st.markdown("### 📚 Citations")
     for idx, cite in enumerate(data.get("citations", []), 1):
         with st.container():
-            relevance_emoji = "🔥" if cite.get("relevance", 0) >= 0.8 else "✅" if cite.get("relevance", 0) >= 0.6 else "📄"
+            relevance_emoji = (
+                "🔥"
+                if cite.get("relevance", 0) >= 0.8
+                else "✅"
+                if cite.get("relevance", 0) >= 0.6
+                else "📄"
+            )
             st.markdown(
                 f"{relevance_emoji} **[{idx}] [{cite.get('title', 'No title')}]({cite.get('url', '#')})**"
             )
@@ -444,7 +481,7 @@ def render_document_library_mode():
     # Tab 1: Upload Documents
     with tab1:
         st.subheader("Upload Document")
-        
+
         col1, col2 = st.columns([2, 1])
         with col1:
             uploaded_file = st.file_uploader(
@@ -464,9 +501,15 @@ def render_document_library_mode():
                 with st.spinner(f"Uploading {uploaded_file.name}..."):
                     try:
                         # Prepare multipart form data
-                        files = {"file": (uploaded_file.name, uploaded_file.getvalue(), uploaded_file.type)}
+                        files = {
+                            "file": (
+                                uploaded_file.name,
+                                uploaded_file.getvalue(),
+                                uploaded_file.type,
+                            )
+                        }
                         data = {"collection": collection}
-                        
+
                         response = httpx.post(
                             f"{API_BASE_URL}/v1/documents/upload",
                             files=files,
@@ -487,7 +530,9 @@ def render_document_library_mode():
                             st.session_state.documents = []
                         else:
                             error_data = response.json()
-                            st.error(f"❌ Upload failed: {error_data.get('detail', 'Unknown error')}")
+                            st.error(
+                                f"❌ Upload failed: {error_data.get('detail', 'Unknown error')}"
+                            )
 
                     except Exception as e:
                         st.error(f"❌ Upload failed: {str(e)}")
@@ -509,7 +554,7 @@ def render_document_library_mode():
     # Tab 2: Query Documents
     with tab2:
         st.subheader("Ask Questions")
-        
+
         col1, col2 = st.columns([2, 1])
         with col1:
             query = st.text_input(
@@ -527,7 +572,9 @@ def render_document_library_mode():
 
         col3, col4, col5 = st.columns(3)
         with col3:
-            top_k = st.slider("Top K chunks", 5, 20, 10, help="Number of relevant chunks to retrieve")
+            top_k = st.slider(
+                "Top K chunks", 5, 20, 10, help="Number of relevant chunks to retrieve"
+            )
         with col4:
             similarity_threshold = st.slider(
                 "Similarity threshold",
@@ -557,11 +604,11 @@ def render_document_library_mode():
 
                     if response.status_code == 200:
                         result = response.json()
-                        
+
                         # Display answer
                         st.markdown("### 📝 Answer")
                         st.markdown(result["answer"])
-                        
+
                         # Display metadata
                         col1, col2, col3 = st.columns(3)
                         with col1:
@@ -570,26 +617,28 @@ def render_document_library_mode():
                             st.metric("📄 Chunks Found", result["total_chunks_found"])
                         with col3:
                             st.metric("📊 Chunks Used", result["chunks_used"])
-                        
+
                         # Display sources
                         st.markdown("### 📚 Sources")
                         for idx, source in enumerate(result["sources"], 1):
                             with st.expander(
                                 f"[{idx}] {source.get('metadata', {}).get('filename', 'Unknown')} "
                                 f"(Similarity: {source.get('similarity', 0):.3f})",
-                                expanded=False
+                                expanded=False,
                             ):
                                 st.markdown(f"**Content:**")
                                 st.text(source["content"])
-                                
+
                                 metadata = source.get("metadata", {})
                                 st.markdown(f"**Metadata:**")
-                                st.json({
-                                    "chunk_id": metadata.get("chunk_id"),
-                                    "collection": metadata.get("collection"),
-                                    "filename": metadata.get("filename"),
-                                })
-                        
+                                st.json(
+                                    {
+                                        "chunk_id": metadata.get("chunk_id"),
+                                        "collection": metadata.get("collection"),
+                                        "filename": metadata.get("filename"),
+                                    }
+                                )
+
                         # Store result in session state
                         st.session_state.query_results.insert(
                             0,
@@ -599,7 +648,7 @@ def render_document_library_mode():
                                 "timestamp": datetime.now(),
                             },
                         )
-                        
+
                     elif response.status_code == 404:
                         st.warning(
                             f"📭 No relevant documents found in collection '{query_collection}'.\n\n"
@@ -619,23 +668,25 @@ def render_document_library_mode():
         if st.session_state.query_results:
             st.divider()
             st.markdown("### 📜 Query History")
-            
+
             if st.button("🗑️ Clear History"):
                 st.session_state.query_results = []
                 st.rerun()
-            
+
             for idx, item in enumerate(st.session_state.query_results[:5]):  # Show last 5
                 with st.expander(
                     f"❓ {item['query'][:60]}... ({item['timestamp'].strftime('%H:%M:%S')})",
-                    expanded=False
+                    expanded=False,
                 ):
                     st.markdown(f"**Answer:** {item['result']['answer'][:200]}...")
-                    st.caption(f"Sources: {item['result']['total_chunks_found']} | Time: {item['result']['execution_time']:.2f}s")
+                    st.caption(
+                        f"Sources: {item['result']['total_chunks_found']} | Time: {item['result']['execution_time']:.2f}s"
+                    )
 
     # Tab 3: My Documents
     with tab3:
         st.subheader("Document Management")
-        
+
         col1, col2 = st.columns([3, 1])
         with col1:
             list_collection = st.text_input(
@@ -656,7 +707,7 @@ def render_document_library_mode():
                     params = {}
                     if list_collection:
                         params["collection"] = list_collection
-                    
+
                     response = httpx.get(
                         f"{API_BASE_URL}/v1/documents",
                         params=params,
@@ -675,11 +726,11 @@ def render_document_library_mode():
         # Display documents
         if st.session_state.documents:
             st.info(f"📊 Total documents: {len(st.session_state.documents)}")
-            
+
             for doc in st.session_state.documents:
                 with st.container():
                     col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
-                    
+
                     with col1:
                         st.markdown(f"**📄 {doc['filename']}**")
                         st.caption(
@@ -687,16 +738,18 @@ def render_document_library_mode():
                             f"Type: {doc['source_type']} | "
                             f"Chunks: {doc['chunks_count']}"
                         )
-                    
+
                     with col2:
                         st.caption(f"Created: {doc['created_at'][:10]}")
-                    
+
                     with col3:
-                        if doc.get('access_count', 0) > 0:
+                        if doc.get("access_count", 0) > 0:
                             st.caption(f"📊 {doc['access_count']} queries")
-                    
+
                     with col4:
-                        if st.button("🗑️", key=f"delete_{doc['document_id']}", help="Delete document"):
+                        if st.button(
+                            "🗑️", key=f"delete_{doc['document_id']}", help="Delete document"
+                        ):
                             with st.spinner("Deleting..."):
                                 try:
                                     response = httpx.delete(
@@ -710,16 +763,17 @@ def render_document_library_mode():
                                         st.rerun()
                                     else:
                                         error_data = response.json()
-                                        st.error(f"❌ Delete failed: {error_data.get('detail', 'Unknown error')}")
+                                        st.error(
+                                            f"❌ Delete failed: {error_data.get('detail', 'Unknown error')}"
+                                        )
 
                                 except Exception as e:
                                     st.error(f"❌ Delete failed: {str(e)}")
-                    
+
                     st.divider()
         else:
             st.info(
-                "📭 No documents found.\n\n"
-                "Upload documents in the **Upload** tab to get started!"
+                "📭 No documents found.\n\nUpload documents in the **Upload** tab to get started!"
             )
 
 
