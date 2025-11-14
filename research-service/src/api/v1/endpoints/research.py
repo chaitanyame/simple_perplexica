@@ -10,8 +10,6 @@ import asyncio
 import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
-
-import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -260,22 +258,39 @@ async def research(
             timeout=float(timeout),
         )
 
-        # Execute research with timeout, mode, and prompt strategy
+        # Execute research with timeout, mode, and prompt strategy, traced in Langfuse
+        trace = None
         try:
-            output = await asyncio.wait_for(
-                agent.run(
-                    request.query, 
-                    mode=search_mode,
-                    prompt_strategy=request.prompt_strategy
-                ),
-                timeout=float(timeout),
-            )
+            with agent.deps.tracer.trace_context(
+                name="research",
+                session_id=str(session_id),
+                metadata={
+                    "mode": request.mode or "balanced",
+                    "max_iterations": request.max_iterations,
+                    "timeout": float(timeout),
+                },
+            ) as _trace:
+                trace = _trace
+                output = await asyncio.wait_for(
+                    agent.run(
+                        request.query,
+                        mode=search_mode,
+                        prompt_strategy=request.prompt_strategy,
+                    ),
+                    timeout=float(timeout),
+                )
         except TimeoutError:
+            try:
+                agent.deps.tracer.track_error(TimeoutError(f"research timeout {timeout}s"))
+                agent.deps.tracer.flush()
+            except Exception:
+                pass
             return JSONResponse(
                 status_code=status.HTTP_504_GATEWAY_TIMEOUT,
                 content={
                     "error": "research_timeout",
                     "message": f"Research exceeded timeout of {request.timeout}s",
+                    "trace_id": agent.deps.tracer.get_trace_id(trace) if agent.deps.tracer else None,
                 },
             )
 
@@ -285,7 +300,7 @@ async def research(
             query=request.query,
             output=output,
             model_used=request.model or settings.LLM_MODEL,
-            trace_url=None,  # TODO: Get from tracer
+            trace_url=(agent.deps.tracer.get_trace_url(trace) if agent.deps.tracer else None),
         )
 
         # Store session in database
@@ -307,11 +322,18 @@ async def research(
         raise
 
     except Exception as e:
-        # Handle unexpected errors
+        # Handle unexpected errors and flush any pending traces
+        try:
+            if 'agent' in locals() and agent.deps.tracer:
+                agent.deps.tracer.track_error(e)
+                agent.deps.tracer.flush()
+        except Exception:
+            pass
         return JSONResponse(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             content={
                 "error": "research_execution_failed",
                 "message": f"Research execution failed: {str(e)}",
+                "trace_id": (agent.deps.tracer.get_trace_id() if 'agent' in locals() and agent.deps.tracer else None),
             },
         )

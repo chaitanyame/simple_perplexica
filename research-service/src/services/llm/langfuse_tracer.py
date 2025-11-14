@@ -61,6 +61,7 @@ class LangfuseTracer:
         self.enabled = enabled
         self.current_trace: Any = None
         self.langfuse_client: Any = None
+        self._host: str | None = None
 
         if not enabled:
             logger.info("Langfuse tracing disabled")
@@ -69,12 +70,34 @@ class LangfuseTracer:
         try:
             from langfuse import Langfuse
 
+            eff_public = (public_key or settings.LANGFUSE_PUBLIC_KEY or "").strip()
+            eff_secret = (secret_key or settings.LANGFUSE_SECRET_KEY or "").strip()
+            eff_host = (host or settings.LANGFUSE_BASE_URL or "").strip()
+
+            if not eff_public or not eff_secret:
+                # Missing credentials: disable tracing explicitly for clarity
+                logger.warning(
+                    "Langfuse disabled: missing credentials",
+                    has_public=bool(eff_public),
+                    has_secret=bool(eff_secret),
+                    host=eff_host,
+                )
+                self.enabled = False
+                self.langfuse_client = None
+                return
+
             self.langfuse_client = Langfuse(
-                public_key=public_key or settings.LANGFUSE_PUBLIC_KEY,
-                secret_key=secret_key or settings.LANGFUSE_SECRET_KEY,
-                host=host or settings.LANGFUSE_BASE_URL,
+                public_key=eff_public,
+                secret_key=eff_secret,
+                host=eff_host,
             )
-            logger.info("Langfuse tracer initialized")
+            self._host = eff_host or None
+            logger.info(
+                "Langfuse tracer initialized",
+                host=eff_host,
+                has_public=True,
+                has_secret=True,
+            )
         except Exception as e:
             logger.warning(f"Failed to initialize Langfuse client: {e}")
             self.enabled = False
@@ -126,6 +149,54 @@ class LangfuseTracer:
             logger.warning(f"Failed to end trace: {e}")
         finally:
             self.current_trace = None
+
+    def get_trace_id(self, trace: Any | None = None) -> str | None:
+        """Return the current trace id (if available).
+
+        Args:
+            trace: Optional explicit trace object (as returned by trace_context)
+
+        Returns:
+            Trace id string or None
+        """
+        try:
+            t = trace or self.current_trace
+            if t is None:
+                return None
+            # Common attribute name in Langfuse client
+            tid = getattr(t, "id", None)
+            if tid is None:
+                return None
+            return str(tid)
+        except Exception:
+            return None
+
+    def get_trace_url(self, trace: Any | None = None) -> str | None:
+        """Return a URL to view the trace in Langfuse (best-effort).
+
+        Tries client helper if available, otherwise constructs a fallback URL
+        using configured host and the trace id.
+        """
+        try:
+            t = trace or self.current_trace
+            if t is None:
+                return None
+            tid = self.get_trace_id(t)
+            if not tid:
+                return None
+            # Prefer client helper if present
+            if self.langfuse_client and hasattr(self.langfuse_client, "get_trace_url"):
+                try:
+                    return self.langfuse_client.get_trace_url(tid)  # type: ignore[attr-defined]
+                except Exception:
+                    pass
+            if self._host:
+                base = self._host.rstrip("/")
+                # Fallback path (may vary by Langfuse version)
+                return f"{base}/traces/{tid}"
+            return None
+        except Exception:
+            return None
 
     def track_generation(
         self,

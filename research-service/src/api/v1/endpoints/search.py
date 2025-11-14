@@ -10,8 +10,6 @@ import asyncio
 import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
-
-import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,8 +28,8 @@ from src.services.crawl.crawl4ai_client import Crawl4AIClient
 from src.services.document.dockling_processor import DocklingProcessor
 from src.services.embedding.embedding_service import EmbeddingService
 from src.services.llm.langfuse_tracer import LangfuseTracer
-from src.services.search.searxng_client import SearxNGClient
 from src.services.llm.openrouter_client import OpenRouterClient
+from src.services.search.searxng_client import SearxNGClient
 
 if TYPE_CHECKING:
     from src.agents.search_agent import SearchOutput
@@ -295,18 +293,36 @@ async def search(
             search_engine=request.search_engine or "auto",
         )
 
-        # Execute search with timeout and mode
+        # Execute search with timeout and mode, traced in Langfuse
+        trace = None
         try:
-            output = await asyncio.wait_for(
-                agent.run(request.query, mode=search_mode),
-                timeout=float(timeout),
-            )
+            with agent.deps.tracer.trace_context(
+                name="search",
+                session_id=str(session_id),
+                metadata={
+                    "mode": request.mode or "balanced",
+                    "max_sources": max_sources,
+                    "timeout": float(timeout),
+                },
+            ) as _trace:
+                trace = _trace
+                output = await asyncio.wait_for(
+                    agent.run(request.query, mode=search_mode),
+                    timeout=float(timeout),
+                )
         except TimeoutError:
+            # Ensure any partial traces are flushed and return trace id for debugging
+            try:
+                agent.deps.tracer.track_error(TimeoutError(f"search timeout {timeout}s"))
+                agent.deps.tracer.flush()
+            except Exception:
+                pass
             return JSONResponse(
                 status_code=status.HTTP_504_GATEWAY_TIMEOUT,
                 content={
                     "error": "search_timeout",
                     "message": f"Search exceeded timeout of {timeout}s",
+                    "trace_id": agent.deps.tracer.get_trace_id(trace) if agent.deps.tracer else None,
                 },
             )
 
@@ -317,7 +333,7 @@ async def search(
             output=output,
             model_used=request.model or settings.LLM_MODEL,
             mode=request.mode or "balanced",
-            trace_url=None,  # Langfuse trace URL - would require session context propagation
+            trace_url=(agent.deps.tracer.get_trace_url(trace) if agent.deps.tracer else None),
         )
 
         # Store session in database
@@ -346,12 +362,22 @@ async def search(
         print(f"❌ Search Error: {str(e)}")
         print(f"Traceback:\n{error_details}")
 
+        # Try to flush any pending traces
+        try:
+            # agent may not exist if failure happened earlier
+            if 'agent' in locals() and agent.deps.tracer:
+                agent.deps.tracer.track_error(e)
+                agent.deps.tracer.flush()
+        except Exception:
+            pass
+
         return JSONResponse(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             content={
                 "error": "search_execution_failed",
                 "message": f"Search execution failed: {str(e)}",
                 "details": error_details if settings.LOG_LEVEL == "DEBUG" else None,
+                "trace_id": (agent.deps.tracer.get_trace_id() if 'agent' in locals() and agent.deps.tracer else None),
             },
         )
 
@@ -454,4 +480,4 @@ async def search_with_perplexity(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Perplexity search execution failed: {str(e)}",
-        )
+        ) from e

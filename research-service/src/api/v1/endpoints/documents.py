@@ -10,7 +10,7 @@ Provides API routes for:
 from __future__ import annotations
 
 import uuid
-from typing import Annotated, Any
+from typing import Annotated
 
 import structlog
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
@@ -134,13 +134,13 @@ async def upload_document(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
-        )
+        ) from e
     except Exception as e:
         logger.error(f"Unexpected error during upload: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Upload failed: {str(e)}",
-        )
+        ) from e
 
 
 @router.post("/query", response_model=DocumentQueryResponse)
@@ -200,10 +200,12 @@ async def query_documents(
             )
 
         # Generate answer using LLM
-        answer = await _generate_answer(
+        gen = await _generate_answer(
             query=request.query,
             chunks=chunks,
         )
+        answer = str(gen.get("content", ""))
+        trace_url = gen.get("trace_url")
 
         execution_time = time.time() - start_time
         logger.info(f"✅ Query completed in {execution_time:.2f}s with {len(chunks)} sources")
@@ -215,6 +217,7 @@ async def query_documents(
             total_chunks_found=len(chunks),
             chunks_used=len(chunks),
             execution_time=execution_time,
+            trace_url=trace_url,
         )
 
     except HTTPException:
@@ -224,13 +227,13 @@ async def query_documents(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(e),
-        )
+        ) from e
     except Exception as e:
         logger.error(f"Unexpected error during query: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Query failed: {str(e)}",
-        )
+        ) from e
 
 
 @router.get("", response_model=DocumentListResponse)
@@ -276,13 +279,13 @@ async def list_documents(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(e),
-        )
+        ) from e
     except Exception as e:
         logger.error(f"Unexpected error during listing: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Listing failed: {str(e)}",
-        )
+        ) from e
 
 
 @router.delete("/{document_id}", response_model=DocumentDeleteResponse)
@@ -324,19 +327,19 @@ async def delete_document(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(e),
-        )
+        ) from e
     except Exception as e:
         logger.error(f"Unexpected error during deletion: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Deletion failed: {str(e)}",
-        )
+        ) from e
 
 
 async def _generate_answer(
     query: str,
     chunks: list[dict],
-) -> str:
+) -> dict[str, str | None]:
     """Generate answer using LLM with retrieved context.
 
     Args:
@@ -383,13 +386,20 @@ async def _generate_answer(
         tracer=tracer,
     )
 
-    response = await llm_client.chat(
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.3,  # Lower temperature for factual answers
-        max_tokens=1000,
-    )
+    with tracer.trace_context(
+        name="documents_query",
+        metadata={"chunks": len(chunks)},
+    ) as trace:
+        response = await llm_client.chat(
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.3,  # Lower temperature for factual answers
+            max_tokens=1000,
+        )
 
     # Flush traces to Langfuse before returning
     tracer.flush()
 
-    return response.get("content", "Unable to generate answer")
+    return {
+        "content": response.get("content", "Unable to generate answer"),
+        "trace_url": tracer.get_trace_url(trace),
+    }

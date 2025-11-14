@@ -103,6 +103,7 @@ services:
       context: .
       dockerfile: Dockerfile.streamlit
     container_name: research_streamlit
+    profiles: ["ui"]
     ports:
       - "8503:8501"
     environment:

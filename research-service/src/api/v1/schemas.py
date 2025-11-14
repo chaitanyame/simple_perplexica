@@ -467,6 +467,7 @@ class DocumentQueryResponse(BaseModel):
     total_chunks_found: int = Field(..., description="Total chunks above similarity threshold")
     chunks_used: int = Field(..., description="Chunks used for answer generation")
     execution_time: float = Field(..., description="Execution time in seconds")
+    trace_url: str | None = Field(None, description="Langfuse trace URL")
 
 
 class DocumentListItem(BaseModel):
