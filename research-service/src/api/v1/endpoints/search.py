@@ -100,7 +100,7 @@ async def create_search_agent(
         if not serperdev_key:
             raise HTTPException(
                 status_code=400,
-                detail="SerperDev API key not configured. Cannot use 'serperdev' mode."
+                detail="SerperDev API key not configured. Cannot use 'serperdev' mode.",
             )
     else:  # auto
         # Use both: SearXNG primary, SerperDev fallback
@@ -274,13 +274,14 @@ async def search(
     try:
         # Get mode configuration
         from src.core.search_modes import get_mode_from_string
+
         search_mode = get_mode_from_string(request.mode)
         config = search_mode.config
-        
+
         # Use request parameters or mode defaults
         max_sources = request.max_sources if request.max_sources is not None else config.max_sources
         timeout = request.timeout if request.timeout is not None else config.timeout
-        
+
         # Create SearchAgent
         agent = await create_search_agent(
             db=db,
@@ -322,7 +323,9 @@ async def search(
                 content={
                     "error": "search_timeout",
                     "message": f"Search exceeded timeout of {timeout}s",
-                    "trace_id": agent.deps.tracer.get_trace_id(trace) if agent.deps.tracer else None,
+                    "trace_id": agent.deps.tracer.get_trace_id(trace)
+                    if agent.deps.tracer
+                    else None,
                 },
             )
 
@@ -365,7 +368,7 @@ async def search(
         # Try to flush any pending traces
         try:
             # agent may not exist if failure happened earlier
-            if 'agent' in locals() and agent.deps.tracer:
+            if "agent" in locals() and agent.deps.tracer:
                 agent.deps.tracer.track_error(e)
                 agent.deps.tracer.flush()
         except Exception:
@@ -377,7 +380,11 @@ async def search(
                 "error": "search_execution_failed",
                 "message": f"Search execution failed: {str(e)}",
                 "details": error_details if settings.LOG_LEVEL == "DEBUG" else None,
-                "trace_id": (agent.deps.tracer.get_trace_id() if 'agent' in locals() and agent.deps.tracer else None),
+                "trace_id": (
+                    agent.deps.tracer.get_trace_id()
+                    if "agent" in locals() and agent.deps.tracer
+                    else None
+                ),
             },
         )
 
@@ -399,37 +406,38 @@ async def search_with_perplexity(
     db: AsyncSession = Depends(get_db),
 ) -> SearchResponse:
     """Execute search query using Perplexity AI directly.
-    
+
     This endpoint bypasses the SearchAgent and uses Perplexity AI's search API
     directly, which returns a complete answer with citations that requires no
     further processing.
-    
+
     Args:
         request: Search request with query and parameters
         db: Database session
-        
+
     Returns:
         SearchResponse with Perplexity's answer and citations
-        
+
     Raises:
         HTTPException: On API error or execution failure
     """
     from src.services.search.perplexity_search import perplexity_search
-    
+
     session_id = uuid.uuid4()
-    
+
     try:
         import time
+
         start_time = time.time()
-        
+
         # Call Perplexity directly (no model parameter - uses config default)
         result = await perplexity_search(
             query=request.query,
             temperature=0.2,  # Precision-focused
         )
-        
+
         execution_time = time.time() - start_time
-        
+
         # Build sources from citations
         sources = []
         for citation in result.get("citations", []):
@@ -444,7 +452,7 @@ async def search_with_perplexity(
                     source_type="web",  # Default to web
                 )
             )
-        
+
         response = SearchResponse(
             session_id=session_id,
             query=request.query,
@@ -457,7 +465,7 @@ async def search_with_perplexity(
             confidence=0.95,  # High confidence - Perplexity curated results
             trace_url=None,
         )
-        
+
         # Store session in database
         await store_search_session(
             db=db,
@@ -465,18 +473,19 @@ async def search_with_perplexity(
             query=request.query,
             result=response.model_dump(mode="json"),
         )
-        
+
         return response
-        
+
     except HTTPException:
         raise
-        
+
     except Exception as e:
         import traceback
+
         error_details = traceback.format_exc()
         print(f"❌ Perplexity Search Error: {str(e)}")
         print(f"Traceback:\n{error_details}")
-        
+
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Perplexity search execution failed: {str(e)}",

@@ -103,7 +103,9 @@ class SearchSourceResponse(BaseModel):
     url: str = Field(..., description="Source URL")
     snippet: str = Field(..., description="Content excerpt")
     relevance: float = Field(..., ge=0.0, le=1.0, description="Search API relevance score")
-    semantic_score: float | None = Field(None, ge=0.0, le=1.0, description="Semantic reranking score")
+    semantic_score: float | None = Field(
+        None, ge=0.0, le=1.0, description="Semantic reranking score"
+    )
     final_score: float = Field(..., ge=0.0, le=1.0, description="Final ranking score")
     source_type: Literal["web", "academic", "news"] = Field(..., description="Source category")
 
@@ -151,8 +153,12 @@ class SearchResponse(BaseModel):
     confidence: float = Field(..., ge=0.0, le=1.0, description="Result confidence")
     model_used: str = Field(..., description="LLM model used")
     trace_url: str | None = Field(None, description="Langfuse trace URL")
-    grounding_score: float | None = Field(None, ge=0.0, le=1.0, description="Hallucination detection score (0-1)")
-    hallucination_count: int | None = Field(None, ge=0, description="Number of unsupported claims detected")
+    grounding_score: float | None = Field(
+        None, ge=0.0, le=1.0, description="Hallucination detection score (0-1)"
+    )
+    hallucination_count: int | None = Field(
+        None, ge=0, description="Number of unsupported claims detected"
+    )
     created_at: datetime = Field(default_factory=datetime.utcnow, description="Response timestamp")
 
 

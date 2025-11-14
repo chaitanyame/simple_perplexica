@@ -98,7 +98,9 @@ async def upload_document(
         HTTPException 400: Invalid file type or size
         HTTPException 500: Processing error
     """
-    logger.info(f"📄 Uploading document: {file.filename} (type={file.content_type}, collection={collection})")
+    logger.info(
+        f"📄 Uploading document: {file.filename} (type={file.content_type}, collection={collection})"
+    )
 
     try:
         # Validate filename

@@ -154,15 +154,15 @@ async def store_research_session(
 
 def normalize_complexity(complexity: str) -> str:
     """Normalize complexity value to match schema requirements.
-    
+
     Args:
         complexity: Raw complexity value from LLM (e.g., 'medium', 'moderate', 'simple')
-        
+
     Returns:
         Normalized complexity: 'simple', 'moderate', or 'complex'
     """
     complexity_lower = complexity.lower().strip()
-    
+
     # Map variations to valid values
     complexity_map = {
         "easy": "simple",
@@ -176,7 +176,7 @@ def normalize_complexity(complexity: str) -> str:
         "complex": "complex",
         "advanced": "complex",
     }
-    
+
     return complexity_map.get(complexity_lower, "moderate")  # Default to moderate
 
 
@@ -244,12 +244,13 @@ async def research(
     try:
         # Get mode configuration
         from src.core.search_modes import get_mode_from_string
+
         search_mode = get_mode_from_string(request.mode)
         config = search_mode.config
-        
+
         # Use request parameter or mode default for timeout
         timeout = request.timeout if request.timeout is not None else config.timeout
-        
+
         # Create ResearchAgent
         agent = await create_research_agent(
             db=db,
@@ -290,7 +291,9 @@ async def research(
                 content={
                     "error": "research_timeout",
                     "message": f"Research exceeded timeout of {request.timeout}s",
-                    "trace_id": agent.deps.tracer.get_trace_id(trace) if agent.deps.tracer else None,
+                    "trace_id": agent.deps.tracer.get_trace_id(trace)
+                    if agent.deps.tracer
+                    else None,
                 },
             )
 
@@ -324,7 +327,7 @@ async def research(
     except Exception as e:
         # Handle unexpected errors and flush any pending traces
         try:
-            if 'agent' in locals() and agent.deps.tracer:
+            if "agent" in locals() and agent.deps.tracer:
                 agent.deps.tracer.track_error(e)
                 agent.deps.tracer.flush()
         except Exception:
@@ -334,6 +337,10 @@ async def research(
             content={
                 "error": "research_execution_failed",
                 "message": f"Research execution failed: {str(e)}",
-                "trace_id": (agent.deps.tracer.get_trace_id() if 'agent' in locals() and agent.deps.tracer else None),
+                "trace_id": (
+                    agent.deps.tracer.get_trace_id()
+                    if "agent" in locals() and agent.deps.tracer
+                    else None
+                ),
             },
         )
