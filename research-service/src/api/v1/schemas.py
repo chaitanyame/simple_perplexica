@@ -65,8 +65,8 @@ class SearchRequest(BaseModel):
     )
     # Enhanced reranking options (experimental)
     enable_diversity: bool = Field(
-        False,
-        description="Enable diversity penalty to reduce duplicate results (experimental)",
+        True,  # ENABLED BY DEFAULT for better result quality
+        description="Enable diversity penalty to reduce duplicate results",
     )
     enable_recency: bool = Field(
         False,

@@ -49,6 +49,7 @@ from src.utils.query_normalizer import normalize_query
 from src.utils.temporal_validator import TemporalValidator
 from src.utils.claim_grounder import ClaimGrounder
 from src.models.citation import Citation
+from src.agents.decomposition_validator import DecompositionValidator
 
 # =============================================================================
 # Pydantic Models for Structured Output
@@ -236,7 +237,9 @@ class SearchAgentDeps:
     enable_reranking: bool = True  # Enable semantic reranking
     rerank_weight: float = 0.6  # Weight for semantic score (0.0-1.0)
     # Enhanced reranking configuration
-    enable_diversity_penalty: bool = False  # Enable diversity penalty (deduplication)
+    enable_diversity_penalty: bool = (
+        True  # Enable diversity penalty (deduplication) - ENABLED BY DEFAULT for better quality
+    )
     enable_recency_boost: bool = False  # Enable recency boost for temporal queries
     enable_query_aware: bool = False  # Enable query-aware score adaptations
     reranking_config: RerankingConfig | None = None  # Advanced reranking config
@@ -423,14 +426,14 @@ Respond with valid JSON only."""
             logger.info(f"📤 System prompt length: {len(system_prompt)} chars")
             logger.info(f"📤 User message: '{messages[1]['content'][:200]}...'")
 
-            # Use Llama 4 Maverick (free model) via OpenRouter
+            # Use DeepSeek Chat (free, no moderation issues) via OpenRouter
             # Note: OpenRouterClient is initialized with a default model,
             # but we can override by temporarily changing it
             original_model = self.deps.llm_client.model
-            self.deps.llm_client.model = "meta-llama/llama-4-maverick:free"  # FREE tier
+            self.deps.llm_client.model = (
+                "deepseek/deepseek-chat"  # FREE tier, no content moderation
+            )
 
-            # Meta models don't support response_format parameter
-            # We rely on the prompt instructing JSON output instead
             response = await self.deps.llm_client.chat(
                 messages=messages,
                 temperature=0.3,
@@ -472,6 +475,50 @@ Respond with valid JSON only."""
                     f"Year: {sq.specific_year or 'N/A'} | "
                     f"Lang: {sq.language}"
                 )
+
+            # ============ QUALITY VALIDATION ============
+            validator = DecompositionValidator(
+                coverage_threshold=0.7,
+                redundancy_threshold=0.85,
+                min_quality_score=0.6,
+                max_retries=1,
+            )
+
+            quality_score = await validator.evaluate_quality(
+                original_query=normalized_query, sub_queries=decomposition.sub_queries
+            )
+
+            # Log quality metrics
+            metrics = quality_score.to_dict()
+            logger.info(f"📊 DECOMPOSITION QUALITY METRICS:")
+            logger.info(f"  Coverage: {metrics['coverage_score']:.2f}")
+            logger.info(f"  Redundancy: {metrics['redundancy_score']:.2f}")
+            logger.info(f"  Completeness: {metrics['completeness']}")
+            logger.info(f"  Overall Score: {metrics['overall_score']:.2f}")
+            logger.info(f"  Passes Threshold: {metrics['passes_threshold']}")
+            if metrics["issues"]:
+                logger.warning(f"  Issues: {', '.join(metrics['issues'])}")
+
+            # Trace to Langfuse if available
+            if hasattr(self.deps, "tracer") and self.deps.tracer:
+                try:
+                    # Add quality metrics to trace context
+                    self.deps.tracer.trace.update(
+                        metadata={
+                            "decomposition_quality": metrics,
+                        }
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to log quality metrics to Langfuse: {e}")
+
+            # If quality is poor, log warning but continue (no retry for now)
+            if not quality_score.passes_threshold:
+                logger.warning(
+                    f"⚠️ Low quality decomposition (score: {quality_score.overall_score:.2f}). "
+                    f"Issues: {', '.join(quality_score.issues)}"
+                )
+                # Future enhancement: Implement retry with improved prompt
+                # For now, we proceed with the decomposition
 
             return decomposition.sub_queries
 
@@ -570,9 +617,88 @@ Respond with valid JSON only."""
         """Search using SearxNG (primary) with fallback to SerperDev.
 
         Order:
-            1. Attempt SearxNG (preferred per spec)
-            2. If SearxNG fails or returns no usable results, try SerperDev (if key)
+            1. Detect year-specific queries → Route to SerperDev for precise filtering
+            2. Attempt SearxNG (preferred per spec)
+            3. If SearxNG fails or returns no usable results, try SerperDev (if key)
         """
+        # -----------------------------
+        # OPTION A: Year-Specific Routing to SerperDev
+        # -----------------------------
+        if (
+            sub_query.specific_year is not None
+            and self.deps.serperdev_api_key
+            and self.deps.serperdev_api_key.strip()
+        ):
+            logger.info(
+                "📅 Year-specific query detected → Routing to SerperDev for precise filtering",
+                query=sub_query.query,
+                year=sub_query.specific_year,
+            )
+
+            try:
+                year = sub_query.specific_year
+                search_params = {
+                    "q": sub_query.query,
+                    "num": 10,
+                    "gl": sub_query.language,
+                    "tbs": f"cdr:1,cd_min:1/1/{year},cd_max:12/31/{year}",  # Precise year filter
+                }
+
+                async def _do_serper() -> httpx.Response:
+                    async with httpx.AsyncClient() as client:
+                        return await client.post(
+                            "https://google.serper.dev/search",
+                            headers={
+                                "X-API-KEY": self.deps.serperdev_api_key,
+                                "Content-Type": "application/json",
+                            },
+                            json=search_params,
+                            timeout=self.timeout,
+                        )
+
+                # Use circuit breaker
+                serper_cb = getattr(self, "_serper_cb", None)
+                if serper_cb is None:
+                    serper_cb = CircuitBreaker(
+                        failure_threshold=settings.PERPLEXITY_CIRCUIT_BREAKER_THRESHOLD,
+                        timeout=float(settings.PERPLEXITY_CIRCUIT_BREAKER_TIMEOUT),
+                    )
+                    self._serper_cb = serper_cb
+
+                response = await serper_cb.call_with_retries(
+                    _do_serper,
+                    retries=3,
+                    backoff_base=0.5,
+                    backoff_factor=2.0,
+                    fallback=lambda: None,
+                )
+
+                if response and response.status_code == 200:
+                    data = response.json()
+                    organic = data.get("organic", [])
+                    if organic:
+                        logger.info(
+                            "✅ SerperDev year-specific success", count=len(organic), year=year
+                        )
+                        return [
+                            SearchSource(
+                                title=r.get("title", ""),
+                                url=r.get("link", ""),
+                                snippet=r.get("snippet", ""),
+                                relevance=0.85,  # Higher relevance for precise temporal match
+                                source_type="web",
+                            )
+                            for r in organic
+                        ]
+                    else:
+                        logger.warning(
+                            "SerperDev year-specific returned 0 results, falling back to SearxNG"
+                        )
+                else:
+                    logger.warning("SerperDev year-specific failed, falling back to SearxNG")
+            except Exception as e:
+                logger.error(f"SerperDev year-specific error: {e}, falling back to SearxNG")
+
         # -----------------------------
         # Primary: SearxNG
         # -----------------------------

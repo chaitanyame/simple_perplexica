@@ -44,7 +44,7 @@ async def create_search_agent(
     timeout: float = 60.0,
     min_sources: int = 5,
     min_confidence: float = 0.5,
-    enable_diversity: bool = False,
+    enable_diversity: bool = True,  # ENABLED BY DEFAULT for better diversity
     enable_recency: bool = False,
     enable_query_aware: bool = False,
     search_engine: str = "auto",
