@@ -13,10 +13,34 @@ from typing import Any
 from openai import APIError, APITimeoutError, AsyncOpenAI, RateLimitError
 
 from ...core.config import settings
+from ...core.circuit_breaker import CircuitBreaker
 from .langfuse_tracer import LangfuseTracer
 from .schemas import LLMClientError
 
 logger = logging.getLogger(__name__)
+
+# LLM circuit breaker singleton
+_llm_circuit_breaker: CircuitBreaker | None = None
+
+
+def get_llm_circuit_breaker() -> CircuitBreaker:
+    """Get or initialize a circuit breaker for LLM operations.
+
+    Reuses Perplexity CB thresholds for simplicity until distinct
+    LLM-specific settings are introduced.
+    """
+    global _llm_circuit_breaker
+    if _llm_circuit_breaker is None:
+        _llm_circuit_breaker = CircuitBreaker(
+            failure_threshold=settings.PERPLEXITY_CIRCUIT_BREAKER_THRESHOLD,
+            timeout=float(settings.PERPLEXITY_CIRCUIT_BREAKER_TIMEOUT),
+        )
+        logger.info(
+            "✅ LLM circuit breaker initialized: threshold=%s, timeout=%ss",
+            settings.PERPLEXITY_CIRCUIT_BREAKER_THRESHOLD,
+            settings.PERPLEXITY_CIRCUIT_BREAKER_TIMEOUT,
+        )
+    return _llm_circuit_breaker
 
 
 class OpenRouterClient:
@@ -132,7 +156,7 @@ class OpenRouterClient:
         top_p: float,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        """Execute non-streaming chat completion with retry logic."""
+        """Execute non-streaming chat completion with retry logic and CB fallback."""
 
         async def _execute() -> dict[str, Any]:
             response = await self.client.chat.completions.create(
@@ -177,7 +201,29 @@ class OpenRouterClient:
 
             return result
 
-        result_dict: dict[str, Any] = await self._retry_with_backoff(_execute)
+        async def _op() -> dict[str, Any]:
+            return await self._retry_with_backoff(_execute)
+
+        def _fallback() -> dict[str, Any]:
+            # Only return fallback if enabled; otherwise allow exception to propagate
+            if not settings.ENABLE_LLM_FALLBACK:
+                raise LLMClientError("LLM fallback disabled")
+            return {
+                "content": "",
+                "role": "assistant",
+                "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+                "model": self.model,
+                "finish_reason": "fallback",
+            }
+
+        breaker = get_llm_circuit_breaker()
+        result_dict: dict[str, Any] = await breaker.call_with_retries(
+            _op,
+            retries=3,
+            backoff_base=0.5,
+            backoff_factor=2.0,
+            fallback=_fallback,
+        )
         return result_dict
 
     async def _chat_stream(
@@ -188,7 +234,7 @@ class OpenRouterClient:
         top_p: float,
         **kwargs: Any,
     ) -> AsyncGenerator[dict[str, Any], None]:
-        """Execute streaming chat completion with retry logic."""
+        """Execute streaming chat completion with retry logic and CB fallback."""
 
         async def _execute() -> Any:
             return await self.client.chat.completions.create(
@@ -201,7 +247,27 @@ class OpenRouterClient:
                 **kwargs,
             )
 
-        stream = await self._retry_with_backoff(_execute)
+        async def _empty_stream():
+            if False:
+                yield  # pragma: no cover
+
+        async def _op() -> Any:
+            return await self._retry_with_backoff(_execute)
+
+        def _fallback_stream() -> Any:
+            # If fallback disabled, raise so callers get error behavior
+            if not settings.ENABLE_LLM_FALLBACK:
+                raise LLMClientError("LLM fallback disabled")
+            return _empty_stream()
+
+        breaker = get_llm_circuit_breaker()
+        stream = await breaker.call_with_retries(
+            _op,
+            retries=3,
+            backoff_base=0.5,
+            backoff_factor=2.0,
+            fallback=_fallback_stream,
+        )
 
         async for chunk in stream:
             if chunk.choices and len(chunk.choices) > 0:

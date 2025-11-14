@@ -26,6 +26,7 @@ logger = structlog.get_logger(__name__)
 
 import json
 import httpx
+from src.core.circuit_breaker import CircuitBreaker
 from pydantic import BaseModel, Field
 from pydantic_ai import ModelRetry
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -72,18 +73,18 @@ class SubQuery(BaseModel):
     temporal_scope: str = Field(
         default="any",
         pattern=r"^(recent|past_year|past_month|past_week|any)$",
-        description="Time filter: recent (past month), past_year, past_month, past_week, any"
+        description="Time filter: recent (past month), past_year, past_month, past_week, any",
     )
     specific_year: int | None = Field(
         default=None,
         ge=1990,
         le=2030,
-        description="Specific year if mentioned (e.g., 2022, 2023). Overrides temporal_scope."
+        description="Specific year if mentioned (e.g., 2022, 2023). Overrides temporal_scope.",
     )
     language: str = Field(
         default="en",
         pattern=r"^(en|es|fr|de)$",
-        description="Query language: en (English), es (Spanish), fr (French), de (German)"
+        description="Query language: en (English), es (Spanish), fr (French), de (German)",
     )
 
 
@@ -109,7 +110,7 @@ class SearchSource(BaseModel):
     semantic_score: float | None = Field(default=None, ge=0.0, le=1.0)
     final_score: float = Field(default=0.0, ge=0.0, le=1.0)
     source_type: str = Field(pattern=r"^(web|academic|news)$")
-    
+
     def model_post_init(self, __context) -> None:
         """Initialize final_score if not provided."""
         if self.final_score == 0.0:
@@ -118,15 +119,13 @@ class SearchSource(BaseModel):
 
 class QueryDecomposition(BaseModel):
     """Result of query decomposition.
-    
+
     Attributes:
         sub_queries: List of decomposed sub-queries
     """
+
     sub_queries: list[SubQuery] = Field(
-        ..., 
-        min_length=1, 
-        max_length=5,
-        description="1-5 focused sub-queries"
+        ..., min_length=1, max_length=5, description="1-5 focused sub-queries"
     )
 
 
@@ -148,7 +147,9 @@ class SearchOutput(BaseModel):
     sources: list[SearchSource]
     execution_time: float
     confidence: float = Field(ge=0.0, le=1.0)
-    grounding_score: float | None = Field(None, ge=0.0, le=1.0, description="Hallucination detection score")
+    grounding_score: float | None = Field(
+        None, ge=0.0, le=1.0, description="Hallucination detection score"
+    )
     hallucination_count: int | None = Field(None, ge=0, description="Number of unsupported claims")
 
 
@@ -159,30 +160,30 @@ class SearchOutput(BaseModel):
 
 def extract_json_from_markdown(content: str) -> str:
     """Extract JSON from markdown code blocks.
-    
+
     Some LLM models wrap JSON responses in ```json...``` or ```...``` blocks.
     This function extracts the JSON content from such blocks.
-    
+
     Args:
         content: Raw LLM response text
-        
+
     Returns:
         Cleaned JSON string
     """
     if not content.startswith("```"):
         return content
-        
+
     lines = content.split("\n")
     json_lines = []
     in_code_block = False
-    
+
     for line in lines:
         if line.strip().startswith("```"):
             in_code_block = not in_code_block
             continue
         if in_code_block:
             json_lines.append(line)
-    
+
     extracted = "\n".join(json_lines).strip()
     logger.info(f"📝 Extracted JSON from markdown code block: {len(extracted)} chars")
     return extracted
@@ -284,8 +285,10 @@ class SearchAgent:
         if deps.serperdev_api_key and deps.serperdev_api_key.strip():
             logger.info("SearchAgent initialized with SearxNG (primary) + SerperDev (fallback)")
         else:
-            logger.info("SearchAgent initialized with SearxNG (primary, no SerperDev key available)")
-        
+            logger.info(
+                "SearchAgent initialized with SearxNG (primary, no SerperDev key available)"
+            )
+
         logger.info(f"✅ Temporal validation enabled with post-retrieval filtering")
 
     async def decompose_query(self, query: str) -> list[SubQuery]:
@@ -306,11 +309,11 @@ class SearchAgent:
         """
         logger.info(f"🧩 QUERY DECOMPOSITION START")
         logger.info(f"📥 Input query (raw): '{query}'")
-        
+
         # Normalize query for consistency
         normalized_query = normalize_query(query)
         logger.info(f"📥 Input query (normalized): '{normalized_query}'")
-        
+
         # Detect language for better search results
         detected_lang = detect_language(query)
         lang_name = get_language_name(detected_lang)
@@ -406,12 +409,12 @@ Respond with valid JSON only."""
 
         try:
             import json
-            
+
             messages = [
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"Query: {query}\n\nDecompose this into sub-queries."}
+                {"role": "user", "content": f"Query: {query}\n\nDecompose this into sub-queries."},
             ]
-            
+
             # ============ CRITICAL LOG: LLM INPUT ============
             logger.info(f"🤖 LLM CALL: Query Decomposition")
             logger.info(f"📤 Model: meta-llama/llama-4-maverick:free")
@@ -419,13 +422,13 @@ Respond with valid JSON only."""
             logger.info(f"📤 Messages count: {len(messages)}")
             logger.info(f"📤 System prompt length: {len(system_prompt)} chars")
             logger.info(f"📤 User message: '{messages[1]['content'][:200]}...'")
-            
+
             # Use Llama 4 Maverick (free model) via OpenRouter
             # Note: OpenRouterClient is initialized with a default model,
             # but we can override by temporarily changing it
             original_model = self.deps.llm_client.model
             self.deps.llm_client.model = "meta-llama/llama-4-maverick:free"  # FREE tier
-            
+
             # Meta models don't support response_format parameter
             # We rely on the prompt instructing JSON output instead
             response = await self.deps.llm_client.chat(
@@ -433,33 +436,33 @@ Respond with valid JSON only."""
                 temperature=0.3,
                 max_tokens=500,
             )
-            
+
             # Restore original model
             self.deps.llm_client.model = original_model
-            
+
             # ============ CRITICAL LOG: LLM RESPONSE ============
             content = response["content"].strip()
             logger.info(f"� LLM RESPONSE received")
             logger.info(f"📥 Response length: {len(content)} chars")
             logger.info(f"📥 Raw response:\n{content}")
-            
+
             # Extract JSON from markdown code blocks if present
             content = extract_json_from_markdown(content)
-            
+
             # Parse JSON response
             data = json.loads(content)
             logger.info(f"✅ JSON parsing successful")
             logger.info(f"✅ Parsed data keys: {list(data.keys())}")
-            
+
             # Validate and convert to SubQuery objects
             decomposition = QueryDecomposition(**data)
-            
+
             # Add detected language to all sub-queries
             for sq in decomposition.sub_queries:
                 sq.language = detected_lang
-            
+
             logger.info(f"🎯 DECOMPOSITION COMPLETE: {len(decomposition.sub_queries)} sub-queries")
-            
+
             for i, sq in enumerate(decomposition.sub_queries, 1):
                 logger.info(
                     f"  [{i}] Query: '{sq.query}' | "
@@ -469,23 +472,24 @@ Respond with valid JSON only."""
                     f"Year: {sq.specific_year or 'N/A'} | "
                     f"Lang: {sq.language}"
                 )
-            
+
             return decomposition.sub_queries
-            
+
         except Exception as e:
             logger.error(f"❌ Query decomposition failed: {e}, using fallback")
             # Fallback: treat as single factual query
-            
+
             # Extract specific year from query (2020-2030 range)
             import re
-            year_pattern = r'\b(20[2-3][0-9])\b'  # Matches 2020-2039
+
+            year_pattern = r"\b(20[2-3][0-9])\b"  # Matches 2020-2039
             year_match = re.search(year_pattern, query)
             specific_year = int(year_match.group(1)) if year_match else None
-            
+
             # Detect temporal keywords
             temporal_keywords = ["latest", "recent", "new", "now", "current", "today"]
             has_temporal_intent = any(kw in query.lower() for kw in temporal_keywords)
-            
+
             # Determine temporal scope (specific year takes priority)
             if specific_year:
                 temporal_scope = "any"  # Year filtering handles it
@@ -496,15 +500,17 @@ Respond with valid JSON only."""
             else:
                 temporal_scope = "any"
                 logger.info(f"  Fallback: no temporal filtering")
-            
-            return [SubQuery(
-                query=query,
-                intent="factual",
-                priority=1,
-                temporal_scope=temporal_scope,
-                specific_year=specific_year,
-                language=detected_lang
-            )]
+
+            return [
+                SubQuery(
+                    query=query,
+                    intent="factual",
+                    priority=1,
+                    temporal_scope=temporal_scope,
+                    specific_year=specific_year,
+                    language=detected_lang,
+                )
+            ]
 
     async def coordinate_search(self, sub_queries: list[SubQuery]) -> list[SearchSource]:
         """Coordinate parallel searches across multiple sources.
@@ -541,15 +547,17 @@ Respond with valid JSON only."""
             # Flatten and deduplicate results
             for idx, result in enumerate(search_results):
                 if isinstance(result, Exception):
-                    logger.error(f"  Search task {idx+1} failed with exception: {result}")
+                    logger.error(f"  Search task {idx + 1} failed with exception: {result}")
                 elif isinstance(result, list):
-                    logger.info(f"  Search task {idx+1} returned {len(result)} sources")
+                    logger.info(f"  Search task {idx + 1} returned {len(result)} sources")
                     for source in result:
                         if source.url not in seen_urls:
                             seen_urls.add(source.url)
                             results.append(source)
                 else:
-                    logger.warning(f"  Search task {idx+1} returned unexpected type: {type(result)}")
+                    logger.warning(
+                        f"  Search task {idx + 1} returned unexpected type: {type(result)}"
+                    )
 
         except Exception as e:
             # Gracefully handle timeouts/errors, return partial results
@@ -585,14 +593,20 @@ Respond with valid JSON only."""
                     time_range = None
                 else:
                     time_range = time_range_map.get(sub_query.temporal_scope)
-                
+
                 # AUTO-DETECT NEWS QUERIES: If query contains "news" and no temporal scope,
                 # default to recent news (past week) to avoid old/irrelevant results
                 if time_range is None and sub_query.temporal_scope == "any":
-                    if any(keyword in sub_query.query.lower() for keyword in ["news", "latest", "current", "recent", "today", "update"]):
+                    if any(
+                        keyword in sub_query.query.lower()
+                        for keyword in ["news", "latest", "current", "recent", "today", "update"]
+                    ):
                         time_range = "week"  # Default to past week for news queries
-                        logger.info(f"📰 Auto-detected news query, filtering to past week", query=sub_query.query)
-                
+                        logger.info(
+                            f"📰 Auto-detected news query, filtering to past week",
+                            query=sub_query.query,
+                        )
+
                 # First attempt
                 categories = getattr(settings, "SEARXNG_DEFAULT_CATEGORIES", ["general"])
                 engines = getattr(settings, "SEARXNG_DEFAULT_ENGINES", []) or None
@@ -633,7 +647,9 @@ Respond with valid JSON only."""
                         safesearch=getattr(settings, "SEARXNG_SAFESEARCH", 1),
                     )
                     if searx_year_results:
-                        logger.info("✅ SearxNG success (year heuristic)", count=len(searx_year_results))
+                        logger.info(
+                            "✅ SearxNG success (year heuristic)", count=len(searx_year_results)
+                        )
                         return [
                             SearchSource(
                                 title=r.get("title", "") if isinstance(r, dict) else "",
@@ -661,7 +677,9 @@ Respond with valid JSON only."""
                     safesearch=getattr(settings, "SEARXNG_SAFESEARCH", 1),
                 )
                 if searx_retry_results:
-                    logger.info("✅ SearxNG success (expanded retry)", count=len(searx_retry_results))
+                    logger.info(
+                        "✅ SearxNG success (expanded retry)", count=len(searx_retry_results)
+                    )
                     return [
                         SearchSource(
                             title=r.get("title", "") if isinstance(r, dict) else "",
@@ -674,7 +692,9 @@ Respond with valid JSON only."""
                         if r is not None and isinstance(r, dict)
                     ]
                 else:
-                    logger.warning("SearxNG expanded retry returned 0 results; proceeding to fallback")
+                    logger.warning(
+                        "SearxNG expanded retry returned 0 results; proceeding to fallback"
+                    )
             else:  # Raw httpx client path
                 # Raw client path - build params manually
                 params = {
@@ -701,7 +721,9 @@ Respond with valid JSON only."""
                     params["engines"] = ",".join(engines)
                 params["safesearch"] = getattr(settings, "SEARXNG_SAFESEARCH", 1)
 
-                response = await self.deps.searxng_client.get("/search", params=params, timeout=self.timeout)
+                response = await self.deps.searxng_client.get(
+                    "/search", params=params, timeout=self.timeout
+                )
                 logger.info("SearxNG response status", status=response.status_code)
                 if response.status_code == 200:
                     data = response.json()
@@ -758,16 +780,35 @@ Respond with valid JSON only."""
             elif sub_query.temporal_scope == "past_year":
                 search_params["tbs"] = "qdr:y"
 
-            async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    "https://google.serper.dev/search",
-                    headers={
-                        "X-API-KEY": self.deps.serperdev_api_key,
-                        "Content-Type": "application/json",
-                    },
-                    json=search_params,
-                    timeout=self.timeout,
+            async def _do_serper() -> httpx.Response:
+                async with httpx.AsyncClient() as client:
+                    return await client.post(
+                        "https://google.serper.dev/search",
+                        headers={
+                            "X-API-KEY": self.deps.serperdev_api_key,
+                            "Content-Type": "application/json",
+                        },
+                        json=search_params,
+                        timeout=self.timeout,
+                    )
+
+            # Use a circuit breaker with retries and exponential backoff
+            # Reuse the Perplexity CB thresholds for now
+            serper_cb = getattr(self, "_serper_cb", None)
+            if serper_cb is None:
+                serper_cb = CircuitBreaker(
+                    failure_threshold=settings.PERPLEXITY_CIRCUIT_BREAKER_THRESHOLD,
+                    timeout=float(settings.PERPLEXITY_CIRCUIT_BREAKER_TIMEOUT),
                 )
+                setattr(self, "_serper_cb", serper_cb)
+
+            response = await serper_cb.call_with_retries(
+                _do_serper,
+                retries=3,
+                backoff_base=0.5,
+                backoff_factor=2.0,
+                fallback=lambda: None,
+            )
 
             logger.info("SerperDev response status", status=response.status_code)
             if response.status_code == 200:
@@ -787,16 +828,14 @@ Respond with valid JSON only."""
                     ]
                 else:
                     logger.warning("SerperDev returned 0 results")
-            else:
+            elif response is not None:
                 logger.warning("SerperDev non-200", status=response.status_code)
         except Exception as e:
             logger.error("SerperDev error", error=str(e))
 
         return []
 
-    async def enrich_sources_with_content(
-        self, sources: list[SearchSource]
-    ) -> list[SearchSource]:
+    async def enrich_sources_with_content(self, sources: list[SearchSource]) -> list[SearchSource]:
         """Enrich search sources by crawling URLs for full content.
 
         Args:
@@ -815,9 +854,7 @@ Respond with valid JSON only."""
 
         # Select top URLs to crawl (by relevance)
         urls_to_crawl = sources[: self.deps.max_crawl_urls]
-        logger.info(
-            f"🌐 Crawling {len(urls_to_crawl)} URLs for full content extraction"
-        )
+        logger.info(f"🌐 Crawling {len(urls_to_crawl)} URLs for full content extraction")
 
         # Crawl URLs in parallel
         crawl_tasks = []
@@ -846,24 +883,22 @@ Respond with valid JSON only."""
             True if URL is a document, False otherwise
         """
         url_lower = url.lower()
-        doc_extensions = ['.pdf', '.docx', '.doc', '.xlsx', '.xls', '.pptx', '.ppt']
-        
+        doc_extensions = [".pdf", ".docx", ".doc", ".xlsx", ".xls", ".pptx", ".ppt"]
+
         # Check file extension in path
         for ext in doc_extensions:
             if ext in url_lower:
                 return True
-        
-        # Check for common PDF URL patterns
-        if 'pdf' in url_lower or 'download' in url_lower or 'arxiv.org/pdf' in url_lower:
-            return True
-            
-        return False
-    
 
+        # Check for common PDF URL patterns
+        if "pdf" in url_lower or "download" in url_lower or "arxiv.org/pdf" in url_lower:
+            return True
+
+        return False
 
     async def _crawl_single_url(self, source: SearchSource) -> SearchSource:
         """Crawl a single URL and update source with content.
-        
+
         Routes to appropriate processor:
         - PDF/DOCX/etc → DocklingProcessor for structured extraction
         - Regular web pages → Crawl4AI for HTML crawling
@@ -878,33 +913,34 @@ Respond with valid JSON only."""
             # Check if this is a document URL
             if self._is_document_url(source.url):
                 logger.info(f"� Processing document: {source.url}")
-                
+
                 # Download document content
                 async with httpx.AsyncClient(timeout=30.0) as client:
                     response = await client.get(source.url, follow_redirects=True)
                     response.raise_for_status()
-                    
+
                     # Extract filename from URL or Content-Disposition
-                    filename = source.url.split('/')[-1]
-                    if '?' in filename:
-                        filename = filename.split('?')[0]
-                    if not any(ext in filename.lower() for ext in ['.pdf', '.docx', '.doc', '.xlsx', '.xls', '.pptx', '.ppt']):
-                        filename += '.pdf'  # Default to PDF if no extension
-                    
+                    filename = source.url.split("/")[-1]
+                    if "?" in filename:
+                        filename = filename.split("?")[0]
+                    if not any(
+                        ext in filename.lower()
+                        for ext in [".pdf", ".docx", ".doc", ".xlsx", ".xls", ".pptx", ".ppt"]
+                    ):
+                        filename += ".pdf"  # Default to PDF if no extension
+
                     # Process document with Dockling
                     processed_doc = await self.deps.document_processor.process_document_bytes(
-                        content=response.content,
-                        filename=filename,
-                        source_url=source.url
+                        content=response.content, filename=filename, source_url=source.url
                     )
-                    
+
                     # Use processed markdown content
                     source.content = processed_doc.content[:10000]  # Limit to 10K chars
                     logger.info(
                         f"✅ Processed document {source.url}: {len(source.content)} chars, "
                         f"{len(processed_doc.chunks)} chunks"
                     )
-                    
+
             else:
                 # Regular web page - use Crawl4AI
                 logger.info(f"�🕷️  Crawling web page: {source.url}")
@@ -916,9 +952,7 @@ Respond with valid JSON only."""
                 if crawled_page.success and crawled_page.markdown:
                     # Use markdown content (cleaner than HTML)
                     source.content = crawled_page.markdown[:10000]  # Limit to 10K chars
-                    logger.info(
-                        f"✅ Crawled {source.url}: {len(source.content)} chars"
-                    )
+                    logger.info(f"✅ Crawled {source.url}: {len(source.content)} chars")
                 else:
                     logger.warning(
                         f"⚠️  Crawl failed for {source.url}: {crawled_page.error_message}"
@@ -967,10 +1001,7 @@ Respond with valid JSON only."""
                 )
 
                 # Prepare documents for reranking (use content if available, else snippet)
-                documents = [
-                    (s.content if s.content else s.snippet)
-                    for s in filtered
-                ]
+                documents = [(s.content if s.content else s.snippet) for s in filtered]
 
                 # Check if enhanced reranking is enabled
                 use_enhanced = (
@@ -991,12 +1022,12 @@ Respond with valid JSON only."""
                             adaptive=True,
                         ),
                     )
-                    
+
                     reranker = SemanticReranker(
                         embedding_service=self.deps.embedding_service,
                         config=config,
                     )
-                    
+
                     # Apply enhanced reranking based on enabled features
                     if self.deps.enable_diversity_penalty and not self.deps.enable_recency_boost:
                         rerank_results = await reranker.rerank_with_diversity(
@@ -1006,10 +1037,13 @@ Respond with valid JSON only."""
                     elif self.deps.enable_recency_boost and not self.deps.enable_diversity_penalty:
                         # Need DocumentWithMetadata for recency
                         from src.services.embedding.semantic_reranker import DocumentWithMetadata
+
                         docs_with_meta = [
                             DocumentWithMetadata(
                                 content=doc,
-                                published_at=filtered[i].published_at if hasattr(filtered[i], 'published_at') else None,
+                                published_at=filtered[i].published_at
+                                if hasattr(filtered[i], "published_at")
+                                else None,
                             )
                             for i, doc in enumerate(documents)
                         ]
@@ -1028,12 +1062,12 @@ Respond with valid JSON only."""
                             query=original_query,
                             documents=documents,
                         )
-                    
+
                     logger.info(
                         "Enhanced semantic reranking applied",
-                        method="diversity" if self.deps.enable_diversity_penalty else (
-                            "recency" if self.deps.enable_recency_boost else "query_aware"
-                        ),
+                        method="diversity"
+                        if self.deps.enable_diversity_penalty
+                        else ("recency" if self.deps.enable_recency_boost else "query_aware"),
                     )
                 else:
                     # Use standard cross-encoder reranking
@@ -1050,8 +1084,7 @@ Respond with valid JSON only."""
                     # final_score = (1 - w) * relevance + w * semantic_score
                     relevance_weight = 1.0 - self.deps.rerank_weight
                     filtered[idx].final_score = (
-                        relevance_weight * filtered[idx].relevance
-                        + self.deps.rerank_weight * score
+                        relevance_weight * filtered[idx].relevance + self.deps.rerank_weight * score
                     )
 
                 logger.info(
@@ -1077,7 +1110,6 @@ Respond with valid JSON only."""
 
         # Return top max_sources
         return filtered[: self.max_sources]
-
 
     # =========================================================================
     # Content-Type Detection and Analysis (Phase 2)
@@ -1112,7 +1144,7 @@ Respond with valid JSON only."""
                 "authority_score": 0.5,
                 "has_code_samples": False,
                 "has_official_docs": False,
-                "primary_type": "general"
+                "primary_type": "general",
             }
 
         # Count source types
@@ -1123,21 +1155,56 @@ Respond with valid JSON only."""
 
         # Keywords for detection
         academic_keywords = [
-            "arxiv", "research", "study", "paper", "journal", "university",
-            "scholar", "academic", "thesis", "dissertation", "proceedings"
+            "arxiv",
+            "research",
+            "study",
+            "paper",
+            "journal",
+            "university",
+            "scholar",
+            "academic",
+            "thesis",
+            "dissertation",
+            "proceedings",
         ]
         news_keywords = [
-            "news", "article", "today", "breaking", "latest", "report",
-            "announcement", "press release", "statement"
+            "news",
+            "article",
+            "today",
+            "breaking",
+            "latest",
+            "report",
+            "announcement",
+            "press release",
+            "statement",
         ]
         technical_keywords = [
-            "github", "documentation", "api", "code", "repository", "library",
-            "framework", "sdk", "tutorial", "guide", "python", "javascript",
-            "typescript", "java", "rust", "go", "example"
+            "github",
+            "documentation",
+            "api",
+            "code",
+            "repository",
+            "library",
+            "framework",
+            "sdk",
+            "tutorial",
+            "guide",
+            "python",
+            "javascript",
+            "typescript",
+            "java",
+            "rust",
+            "go",
+            "example",
         ]
         official_domains = [
-            "github.com/official", "docs.microsoft.com", "cloud.google.com",
-            "aws.amazon.com", "docs.", ".org/docs", "developer."
+            "github.com/official",
+            "docs.microsoft.com",
+            "cloud.google.com",
+            "aws.amazon.com",
+            "docs.",
+            ".org/docs",
+            "developer.",
         ]
 
         # Analyze each source
@@ -1167,7 +1234,9 @@ Respond with valid JSON only."""
         academic_ratio = academic_count / total if total > 0 else 0.0
         news_ratio = news_count / total if total > 0 else 0.0
         technical_ratio = technical_count / total if total > 0 else 0.0
-        authority_score = (authority_sources + sum(1 for s in sources if s.relevance > 0.8)) / (total * 2)
+        authority_score = (authority_sources + sum(1 for s in sources if s.relevance > 0.8)) / (
+            total * 2
+        )
 
         # Determine primary type
         ratios = {
@@ -1188,7 +1257,7 @@ Respond with valid JSON only."""
             "authority_score": min(authority_score, 1.0),
             "has_code_samples": has_code_samples,
             "has_official_docs": has_official_docs,
-            "primary_type": primary_type if max(ratios.values()) > 0.2 else "mixed"
+            "primary_type": primary_type if max(ratios.values()) > 0.2 else "mixed",
         }
 
     def _detect_any_comparison(self, query: str) -> dict[str, bool]:
@@ -1234,7 +1303,7 @@ Respond with valid JSON only."""
                 "items": cloud_provider_info["providers"],
                 "item_count": cloud_provider_info["provider_count"],
                 "comparison_type": "cloud_provider",
-                "provider_info": cloud_provider_info
+                "provider_info": cloud_provider_info,
             }
 
         # Generic comparison detection for any items
@@ -1257,7 +1326,8 @@ Respond with valid JSON only."""
 
             # Filter out empty items and very short items (likely noise)
             items = [
-                item for item in potential_items
+                item
+                for item in potential_items
                 if item and len(item) > 2 and item not in ["and", "or", "the"]
             ]
 
@@ -1272,7 +1342,7 @@ Respond with valid JSON only."""
             "items": items,
             "item_count": len(items),
             "comparison_type": "generic",
-            "provider_info": {}
+            "provider_info": {},
         }
 
     def _detect_provider_comparison(self, query: str) -> dict[str, bool]:
@@ -1309,9 +1379,13 @@ Respond with valid JSON only."""
 
         # Provider detection patterns
         providers_detected = {
-            "aws": any(term in query_lower for term in ["aws", "amazon web services", "amazon aws"]),
+            "aws": any(
+                term in query_lower for term in ["aws", "amazon web services", "amazon aws"]
+            ),
             "azure": any(term in query_lower for term in ["azure", "microsoft azure"]),
-            "gcp": any(term in query_lower for term in ["gcp", "google cloud", "google cloud platform"]),
+            "gcp": any(
+                term in query_lower for term in ["gcp", "google cloud", "google cloud platform"]
+            ),
         }
 
         # Other cloud providers
@@ -1319,14 +1393,24 @@ Respond with valid JSON only."""
         other_providers = [p for p in other_keywords if p in query_lower]
 
         # Detect if this is a comparison query
-        comparison_keywords = ["vs", "versus", "compare", "comparison", "difference", "between", "and"]
+        comparison_keywords = [
+            "vs",
+            "versus",
+            "compare",
+            "comparison",
+            "difference",
+            "between",
+            "and",
+        ]
         is_comparison = any(kw in query_lower for kw in comparison_keywords)
 
         # Count detected providers
         detected_count = sum(1 for v in providers_detected.values() if v)
 
         # It's a comparison if multiple providers OR explicit comparison keyword + any provider
-        is_comparison = is_comparison and detected_count >= 2 or (detected_count > 1 and not is_comparison)
+        is_comparison = (
+            is_comparison and detected_count >= 2 or (detected_count > 1 and not is_comparison)
+        )
 
         providers_list = [p for p, detected in providers_detected.items() if detected]
         providers_list.extend(other_providers)
@@ -1338,7 +1422,7 @@ Respond with valid JSON only."""
             "azure": providers_detected["azure"],
             "gcp": providers_detected["gcp"],
             "other_providers": other_providers,
-            "provider_count": len(providers_list)
+            "provider_count": len(providers_list),
         }
 
     def _get_balanced_coverage_instructions(self, comparison_info: dict) -> str:
@@ -1387,37 +1471,49 @@ Respond with valid JSON only."""
             # Special handling for cloud providers with known names
             provider_info = comparison_info.get("provider_info", {})
             if provider_info.get("aws"):
-                item_sections.append("AWS: Include all announcements, features, services, and tools mentioned")
+                item_sections.append(
+                    "AWS: Include all announcements, features, services, and tools mentioned"
+                )
             if provider_info.get("azure"):
-                item_sections.append("Azure: Include all announcements, features, services, and tools mentioned")
+                item_sections.append(
+                    "Azure: Include all announcements, features, services, and tools mentioned"
+                )
             if provider_info.get("gcp"):
-                item_sections.append("Google Cloud: Include all announcements, features, services, and tools mentioned")
+                item_sections.append(
+                    "Google Cloud: Include all announcements, features, services, and tools mentioned"
+                )
 
             for other in provider_info.get("other_providers", []):
-                item_sections.append(f"{other.title()}: Include all announcements and updates mentioned")
+                item_sections.append(
+                    f"{other.title()}: Include all announcements and updates mentioned"
+                )
         else:
             # Generic items - just include all with standard requirements
             for item in items:
                 # Capitalize properly
                 item_display = " ".join(word.capitalize() for word in item.split())
-                item_sections.append(f"{item_display}: Include all specific information, features, and details mentioned")
+                item_sections.append(
+                    f"{item_display}: Include all specific information, features, and details mentioned"
+                )
 
         # Determine plural form for items
         item_type = "items" if len(items) > 1 else "item"
-        items_display = ", ".join([item.upper() if len(item) <= 10 else item.title() for item in items])
+        items_display = ", ".join(
+            [item.upper() if len(item) <= 10 else item.title() for item in items]
+        )
 
         instructions = f"""
 MULTI-ITEM BALANCED COVERAGE REQUIREMENT:
 This query compares {item_count} {item_type}: {items_display}
 
 EQUAL REPRESENTATION MANDATE:
-- Allocate approximately {target_coverage:.0%} of coverage to each {item_type.rstrip('s')}
+- Allocate approximately {target_coverage:.0%} of coverage to each {item_type.rstrip("s")}
 - Include all specific information, features, and details for each item
 - Do NOT deprioritize any item due to source quality, specificity, or citation differences
 - Each item section should be roughly equal in detail and length
 
 ITEM-SPECIFIC REQUIREMENTS:
-{chr(10).join('- ' + section for section in item_sections)}
+{chr(10).join("- " + section for section in item_sections)}
 
 COVERAGE BALANCE CHECK:
 Before finalizing the answer, verify:
@@ -1550,7 +1646,7 @@ OFFICIAL DOCUMENTATION PRIORITY:
         language: str,
         citation_quality: float | None,
         confidence_scores: dict[str, float] | None,
-        execution_time: float
+        execution_time: float,
     ) -> None:
         """Log comprehensive response metrics for observability.
 
@@ -1594,21 +1690,33 @@ OFFICIAL DOCUMENTATION PRIORITY:
 
         # Phase 1: Hallucination Detection Metrics
         logger.info("\n--- PHASE 1: HALLUCINATION DETECTION ---")
-        logger.info(f"Grounding Score: {grounding_score:.2f}/1.0" if grounding_score is not None else "Grounding Score: N/A")
-        logger.info(f"Hallucination Count: {hallucination_count}/{total_claims}" if hallucination_count is not None else "Hallucination Count: N/A")
+        logger.info(
+            f"Grounding Score: {grounding_score:.2f}/1.0"
+            if grounding_score is not None
+            else "Grounding Score: N/A"
+        )
+        logger.info(
+            f"Hallucination Count: {hallucination_count}/{total_claims}"
+            if hallucination_count is not None
+            else "Hallucination Count: N/A"
+        )
         if hallucination_count is not None and total_claims > 0:
             hallucination_rate = hallucination_count / total_claims
             logger.info(f"Hallucination Rate: {hallucination_rate:.1%}")
 
         # Phase 3 Task 1: Citation Quality Metrics
         logger.info("\n--- PHASE 3 TASK 1: CITATION QUALITY ---")
-        logger.info(f"Average Citation Quality: {citation_quality:.2f}/1.0" if citation_quality is not None else "Average Citation Quality: N/A")
+        logger.info(
+            f"Average Citation Quality: {citation_quality:.2f}/1.0"
+            if citation_quality is not None
+            else "Average Citation Quality: N/A"
+        )
 
         # Phase 3 Task 5: Confidence Scoring Metrics
         logger.info("\n--- PHASE 3 TASK 5: CONFIDENCE SCORING ---")
         if confidence_scores:
             for score_type, score_value in confidence_scores.items():
-                readable_name = score_type.replace('_', ' ').title()
+                readable_name = score_type.replace("_", " ").title()
                 logger.info(f"{readable_name}: {score_value:.2f}/1.0")
         else:
             logger.info("Confidence Scores: N/A")
@@ -1624,7 +1732,7 @@ OFFICIAL DOCUMENTATION PRIORITY:
         grounding_score: float | None,
         content_type: str,
         hallucination_count: int | None,
-        total_claims: int
+        total_claims: int,
     ) -> dict[str, float]:
         """Calculate response confidence scores with per-type metrics.
 
@@ -1667,15 +1775,11 @@ OFFICIAL DOCUMENTATION PRIORITY:
 
         # Overall confidence calculation
         overall_confidence = (
-            grounding_score * 0.5 +
-            authority_score * 0.3 +
-            anti_hallucination_score * 0.2
+            grounding_score * 0.5 + authority_score * 0.3 + anti_hallucination_score * 0.2
         )
         overall_confidence = min(overall_confidence, 1.0)
 
-        confidence_dict = {
-            "overall_confidence": overall_confidence
-        }
+        confidence_dict = {"overall_confidence": overall_confidence}
 
         # Type-specific confidence scores
         if content_type == "academic":
@@ -1691,7 +1795,7 @@ OFFICIAL DOCUMENTATION PRIORITY:
 
         elif content_type == "technical":
             # Technical: Accuracy from grounding + authority
-            technical_accuracy = (grounding_score * 0.7 + authority_score * 0.3)
+            technical_accuracy = grounding_score * 0.7 + authority_score * 0.3
             confidence_dict["technical_accuracy_confidence"] = min(technical_accuracy, 1.0)
 
         return confidence_dict
@@ -1731,7 +1835,6 @@ OFFICIAL DOCUMENTATION PRIORITY:
 - Sentence structure: Clear topic sentences followed by supporting details
 - Contractions acceptable in semi-formal writing
 - Use specific examples and concrete evidence""",
-
             "es": """CONVENCIONES DE ESCRITURA EN ESPAOL:
 - Usar voz activa preferentemente
 - Formato de citas: Autor (Ao) [referencia]
@@ -1740,7 +1843,6 @@ OFFICIAL DOCUMENTATION PRIORITY:
 - Estructura: Oraciones temticas claras con detalles de apoyo
 - Evitar construcciones pasivas cuando sea posible
 - Usar ejemplos especficos de fuentes confiables""",
-
             "fr": """CONVENTIONS D'CRITURE EN FRANAIS:
 - Utiliser la voix active de prfrence
 - Format de citation: Auteur (Anne) [rfrence]
@@ -1749,7 +1851,6 @@ OFFICIAL DOCUMENTATION PRIORITY:
 - Structure: Phrases thmatiques claires avec dtails de soutien
 - Viter les constructions passives quand possible
 - Inclure des exemples spcifiques de sources fiables""",
-
             "de": """DEUTSCHSPRACHIGE SCHREIBKONVENTIONEN:
 - Aktive Stimme bevorzugt verwenden
 - Zitierformat: Autor (Jahr) [Referenz]
@@ -1757,7 +1858,7 @@ OFFICIAL DOCUMENTATION PRIORITY:
 - Daten: Datumsformat Tag. Monat Jahr (z. B., 12. November 2024)
 - Struktur: Klare Themenstze mit untersttzenden Details
 - Passivkonstruktionen vermeiden, wenn mglich
-- Spezifische Beispiele aus zuverlssigen Quellen einbinden"""
+- Spezifische Beispiele aus zuverlssigen Quellen einbinden""",
         }
 
         return language_instructions.get(language, language_instructions["en"])
@@ -1780,12 +1881,28 @@ OFFICIAL DOCUMENTATION PRIORITY:
         primary_intent = sub_queries[0].intent if sub_queries else "factual"
 
         # Check for comparative keywords (override intent)
-        comparative_keywords = ["vs", "versus", "compare", "comparison", "difference between", "similar to", "unlike"]
+        comparative_keywords = [
+            "vs",
+            "versus",
+            "compare",
+            "comparison",
+            "difference between",
+            "similar to",
+            "unlike",
+        ]
         if any(kw in query.lower() for kw in comparative_keywords):
             return self._get_comparative_template()
 
         # Check for analytical keywords (override intent)
-        analytical_keywords = ["analyze", "trends", "outlook", "implications", "impact", "effect", "causes"]
+        analytical_keywords = [
+            "analyze",
+            "trends",
+            "outlook",
+            "implications",
+            "impact",
+            "effect",
+            "causes",
+        ]
         if any(kw in query.lower() for kw in analytical_keywords):
             return self._get_analytical_template()
 
@@ -1886,7 +2003,6 @@ FORMATTING:
 - Use forward-looking language for implications
 """
 
-
     async def generate_answer(
         self, query: str, sources: list[SearchSource], sub_queries: list[SubQuery] | None = None
     ) -> tuple[str, float | None, int | None]:
@@ -1908,7 +2024,11 @@ FORMATTING:
             >>> assert len(answer) > 100
         """
         if not sources:
-            return ("I couldn't find enough information to answer your question. Please try rephrasing your query.", None, None)
+            return (
+                "I couldn't find enough information to answer your question. Please try rephrasing your query.",
+                None,
+                None,
+            )
 
         # Build context from sources
         context_parts = []
@@ -1917,15 +2037,17 @@ FORMATTING:
             content_text = source.content if source.content else source.snippet
             # Limit content length per source (max 8000 chars to capture full articles)
             content_text = content_text[:8000] if len(content_text) > 8000 else content_text
-            
+
             context_parts.append(
                 f"[{idx}] {source.title}\nContent: {content_text}\nURL: {source.url}\n"
             )
         context = "\n".join(context_parts)
-        
+
         # Log content enrichment stats
         enriched_count = sum(1 for s in sources[:7] if s.content)
-        logger.info(f"📊 Using {enriched_count}/7 sources with full content, {7-enriched_count} with snippets only")
+        logger.info(
+            f"📊 Using {enriched_count}/7 sources with full content, {7 - enriched_count} with snippets only"
+        )
 
         # ============ CRITICAL LOG: ANSWER GENERATION INPUT ============
         logger.info(f"💬 ANSWER GENERATION START")
@@ -1942,7 +2064,9 @@ FORMATTING:
         # ========== PHASE 2: CONTENT-TYPE ANALYSIS ==========
         # Analyze source composition to adapt response style
         composition = self._analyze_source_composition(sources[:7])
-        logger.info(f"📊 Source composition: {composition['primary_type']} (academic={composition['academic_ratio']:.0%}, news={composition['news_ratio']:.0%}, technical={composition['technical_ratio']:.0%})")
+        logger.info(
+            f"📊 Source composition: {composition['primary_type']} (academic={composition['academic_ratio']:.0%}, news={composition['news_ratio']:.0%}, technical={composition['technical_ratio']:.0%})"
+        )
 
         # Build content-type-specific instructions
         content_type_instructions = self._build_content_type_instructions(composition)
@@ -1965,13 +2089,19 @@ FORMATTING:
             item_count = comparison_info.get("item_count", 0)
 
             if comparison_type == "cloud_provider":
-                logger.info(f"🔍 Cloud provider comparison detected: {', '.join([p.upper() for p in items])}")
+                logger.info(
+                    f"🔍 Cloud provider comparison detected: {', '.join([p.upper() for p in items])}"
+                )
             else:
-                logger.info(f"🔍 Multi-item comparison detected: {', '.join([item.title() for item in items])}")
+                logger.info(
+                    f"🔍 Multi-item comparison detected: {', '.join([item.title() for item in items])}"
+                )
 
             logger.info(f"📊 Items being compared: {item_count}")
             if balanced_coverage_instructions:
-                logger.info(f"📝 Balanced coverage instructions: {len(balanced_coverage_instructions)} chars")
+                logger.info(
+                    f"📝 Balanced coverage instructions: {len(balanced_coverage_instructions)} chars"
+                )
 
         # ========== PHASE 3 TASK 2: MULTI-LINGUAL ADAPTATION ==========
         # Detect language and build language-specific instructions
@@ -2089,7 +2219,7 @@ Write a detailed answer with full explanations for everything:"""
         logger.info(f"📤 Model: google/gemini-2.5-flash-lite (final answer generation)")
         logger.info(f"📤 Temperature: 0.7, Max Tokens: 2048")
         logger.info(f"📤 Prompt length: {len(prompt)} chars")
-        
+
         # ============ FULL PROMPT LOGGING ============
         logger.info("=" * 80)
         logger.info("� FULL LLM INPUT (SEARCH - ANSWER GENERATION)")
@@ -2100,23 +2230,24 @@ Write a detailed answer with full explanations for everything:"""
         try:
             # Use synthesis model for final answer generation (if configured)
             from src.core.config import settings
+
             original_model = self.deps.llm_client.model
             if settings.SYNTHESIS_LLM_MODEL:
                 self.deps.llm_client.model = settings.SYNTHESIS_LLM_MODEL
                 logger.info(f"Using synthesis model: {settings.SYNTHESIS_LLM_MODEL}")
-            
+
             response = await self.deps.llm_client.chat(
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.7,
                 max_tokens=2048,  # Allow longer, more detailed responses
             )
-            
+
             # Restore original model
             self.deps.llm_client.model = original_model
 
             # ============ CRITICAL LOG: LLM RESPONSE ============
             logger.info(f"📥 LLM RESPONSE received")
-            
+
             # Extract answer from response
             if isinstance(response, dict) and "content" in response:
                 answer = response["content"].strip()
@@ -2142,7 +2273,7 @@ Write a detailed answer with full explanations for everything:"""
                             title=source.title,
                             url=source.url,
                             excerpt=source.content if source.content else source.snippet,
-                            relevance=source.relevance
+                            relevance=source.relevance,
                         )
                         for i, source in enumerate(sources[:7], 1)
                     ]
@@ -2151,7 +2282,7 @@ Write a detailed answer with full explanations for everything:"""
                     claim_grounder = ClaimGrounder(
                         embedding_service=self.deps.embedding_service,
                         grounding_threshold=0.6,
-                        similarity_threshold=0.7
+                        similarity_threshold=0.7,
                     )
 
                     grounding_result = await claim_grounder.ground_synthesis(answer, citations)
@@ -2160,45 +2291,79 @@ Write a detailed answer with full explanations for everything:"""
 
                     logger.info(f"✅ HALLUCINATION DETECTION COMPLETE")
                     logger.info(f"📊 Grounding Score: {grounding_score:.2f}/1.0")
-                    logger.info(f"📊 Hallucination Count: {hallucination_count}/{len(grounding_result.claims)} claims")
+                    logger.info(
+                        f"📊 Hallucination Count: {hallucination_count}/{len(grounding_result.claims)} claims"
+                    )
 
                     if grounding_result.hallucination_count > 0:
-                        hallucination_rate = grounding_result.hallucination_count / len(grounding_result.claims)
+                        hallucination_rate = grounding_result.hallucination_count / len(
+                            grounding_result.claims
+                        )
                         if hallucination_rate > 0.2:
-                            logger.warning(f"⚠️ High hallucination rate detected: {hallucination_rate:.1%}")
+                            logger.warning(
+                                f"⚠️ High hallucination rate detected: {hallucination_rate:.1%}"
+                            )
                         else:
-                            logger.info(f"✓ Hallucination rate within acceptable range: {hallucination_rate:.1%}")
+                            logger.info(
+                                f"✓ Hallucination rate within acceptable range: {hallucination_rate:.1%}"
+                            )
 
                     # ========== PHASE 3 TASK 1: CITATION QUALITY VERIFICATION ==========
                     # Grade citation authority levels
                     for citation in citations:
-                        citation.authority_level = claim_grounder._grade_citation_authority(citation)
+                        citation.authority_level = claim_grounder._grade_citation_authority(
+                            citation
+                        )
 
                     logger.info(f"📊 Citation Authority Grading Complete")
                     authority_breakdown = {}
                     for citation in citations:
-                        authority_breakdown[citation.authority_level] = authority_breakdown.get(citation.authority_level, 0) + 1
+                        authority_breakdown[citation.authority_level] = (
+                            authority_breakdown.get(citation.authority_level, 0) + 1
+                        )
                     logger.info(f"📊 Authority Distribution: {authority_breakdown}")
 
                     # Calculate citation quality for each claim
                     if grounding_result.claims:
                         for claim in grounding_result.claims:
-                            claim.citation_quality_score = await claim_grounder.calculate_citation_quality(claim, citations)
+                            claim.citation_quality_score = (
+                                await claim_grounder.calculate_citation_quality(claim, citations)
+                            )
                             # Set best citation authority level
                             if claim.supporting_sources:
-                                best_citation = next((c for c in citations if c.source_id == claim.supporting_sources[0]), None)
+                                best_citation = next(
+                                    (
+                                        c
+                                        for c in citations
+                                        if c.source_id == claim.supporting_sources[0]
+                                    ),
+                                    None,
+                                )
                                 if best_citation:
                                     claim.citation_authority_level = best_citation.authority_level
 
                         logger.info(f"✅ CITATION QUALITY VERIFICATION COMPLETE")
-                        avg_quality = sum(c.citation_quality_score for c in grounding_result.claims) / len(grounding_result.claims) if grounding_result.claims else 0
+                        avg_quality = (
+                            sum(c.citation_quality_score for c in grounding_result.claims)
+                            / len(grounding_result.claims)
+                            if grounding_result.claims
+                            else 0
+                        )
                         logger.info(f"📊 Average Citation Quality: {avg_quality:.2f}/1.0")
 
                         # Reorder claims by citation quality
-                        reordered_claims = claim_grounder._reorder_claims_by_citation_quality(grounding_result.claims)
+                        reordered_claims = claim_grounder._reorder_claims_by_citation_quality(
+                            grounding_result.claims
+                        )
                         if reordered_claims != grounding_result.claims:
-                            logger.info(f"📊 Reordered {len(reordered_claims)} claims by citation quality")
-                            best_citation_authority = reordered_claims[0].citation_authority_level if reordered_claims else "unknown"
+                            logger.info(
+                                f"📊 Reordered {len(reordered_claims)} claims by citation quality"
+                            )
+                            best_citation_authority = (
+                                reordered_claims[0].citation_authority_level
+                                if reordered_claims
+                                else "unknown"
+                            )
                             logger.info(f"📊 Best claim authority: {best_citation_authority}")
 
                     # ========== PHASE 3 TASK 5: CONFIDENCE SCORING ==========
@@ -2208,26 +2373,34 @@ Write a detailed answer with full explanations for everything:"""
                         grounding_score=grounding_score,
                         content_type=composition["primary_type"],
                         hallucination_count=hallucination_count,
-                        total_claims=total_claims
+                        total_claims=total_claims,
                     )
 
                     logger.info(f"✅ CONFIDENCE SCORING COMPLETE")
-                    logger.info(f"📊 Overall Confidence: {confidence_scores['overall_confidence']:.2f}/1.0")
+                    logger.info(
+                        f"📊 Overall Confidence: {confidence_scores['overall_confidence']:.2f}/1.0"
+                    )
 
                     # Log type-specific confidence
                     for score_type, score_value in confidence_scores.items():
                         if score_type != "overall_confidence":
-                            logger.info(f"📊 {score_type.replace('_', ' ').title()}: {score_value:.2f}/1.0")
+                            logger.info(
+                                f"📊 {score_type.replace('_', ' ').title()}: {score_value:.2f}/1.0"
+                            )
 
                 except Exception as e:
                     logger.warning(f"⚠️ Hallucination detection failed: {e}")
-                    logger.info("Continuing with answer generation (hallucination metrics unavailable)")
+                    logger.info(
+                        "Continuing with answer generation (hallucination metrics unavailable)"
+                    )
 
                 logger.info(f"✅ ANSWER GENERATION COMPLETE")
                 return (answer, grounding_score, hallucination_count)
             else:
                 logger.warning("⚠️ LLM response format unexpected, using fallback")
-                logger.warning(f"Response type: {type(response)}, keys: {response.keys() if isinstance(response, dict) else 'N/A'}")
+                logger.warning(
+                    f"Response type: {type(response)}, keys: {response.keys() if isinstance(response, dict) else 'N/A'}"
+                )
                 fallback_answer = self._generate_fallback_answer(query, sources)
                 return (fallback_answer, None, None)
 
@@ -2236,9 +2409,7 @@ Write a detailed answer with full explanations for everything:"""
             fallback_answer = self._generate_fallback_answer(query, sources)
             return (fallback_answer, None, None)
 
-    def _generate_fallback_answer(
-        self, query: str, sources: list[SearchSource]
-    ) -> str:
+    def _generate_fallback_answer(self, query: str, sources: list[SearchSource]) -> str:
         """Generate a simple fallback answer if LLM fails.
 
         Args:
@@ -2310,12 +2481,15 @@ Write a detailed answer with full explanations for everything:"""
             search_mode = SearchMode.BALANCED
         else:
             search_mode = mode
-        
+
         config = search_mode.config
-        
+
         # Auto-enable recency boost for news/current event queries
-        is_news_query = any(keyword in query.lower() for keyword in ["news", "latest", "current", "recent", "today", "update", "breaking"])
-        
+        is_news_query = any(
+            keyword in query.lower()
+            for keyword in ["news", "latest", "current", "recent", "today", "update", "breaking"]
+        )
+
         logger.info(
             "Starting search with mode",
             query=query,
@@ -2332,15 +2506,15 @@ Write a detailed answer with full explanations for everything:"""
         original_enable_reranking = self.deps.enable_reranking
         original_max_crawl_urls = self.deps.max_crawl_urls
         original_enable_recency_boost = self.deps.enable_recency_boost
-        
+
         self.max_sources = config.max_sources
         self.deps.enable_reranking = config.enable_reranking
-        
+
         # Auto-enable recency boost for news queries to rank recent content higher
         if is_news_query and not self.deps.enable_recency_boost:
             self.deps.enable_recency_boost = True
             logger.info("📰 Auto-enabled recency boost for news query")
-        
+
         # Adjust max_crawl_urls based on mode for better performance
         # BALANCED: crawl top 5 (half of sources) for speed
         # DEEP: crawl all sources for comprehensiveness
@@ -2368,11 +2542,11 @@ Write a detailed answer with full explanations for everything:"""
             # 3.5. Temporal validation (post-retrieval filtering - Big Tech approach)
             logger.info(f"🕒 TEMPORAL VALIDATION START")
             logger.info(f"📊 Input: {len(enriched_sources)} sources before validation")
-            
+
             # Extract temporal intent from sub_queries
             target_year = None
             temporal_scope = "any"
-            
+
             for sq in sub_queries:
                 if sq.specific_year:
                     target_year = sq.specific_year
@@ -2381,15 +2555,15 @@ Write a detailed answer with full explanations for everything:"""
                 elif sq.temporal_scope != "any":
                     temporal_scope = sq.temporal_scope
                     logger.info(f"  Detected temporal scope: {temporal_scope}")
-            
+
             # Apply temporal validation (penalize mismatched sources)
             validated_sources = self.temporal_validator.filter_and_rerank_sources(
                 sources=enriched_sources,
                 target_year=target_year,
                 temporal_scope=temporal_scope,
-                strict_filtering=False  # Penalize, don't remove
+                strict_filtering=False,  # Penalize, don't remove
             )
-            
+
             logger.info(f"✅ TEMPORAL VALIDATION COMPLETE")
             logger.info(f"📊 Output: {len(validated_sources)} sources after validation")
 
@@ -2397,7 +2571,9 @@ Write a detailed answer with full explanations for everything:"""
             ranked_sources = await self.rank_results(validated_sources, query)
 
             # 5. Generate answer from sources
-            answer, grounding_score, hallucination_count = await self.generate_answer(query, ranked_sources, sub_queries)
+            answer, grounding_score, hallucination_count = await self.generate_answer(
+                query, ranked_sources, sub_queries
+            )
 
             execution_time = time.time() - start_time
 
@@ -2423,7 +2599,7 @@ Write a detailed answer with full explanations for everything:"""
             )
 
             return output
-        
+
         finally:
             # Restore original settings
             self.max_sources = original_max_sources

@@ -29,7 +29,27 @@ from typing import Any, Sequence
 import httpx
 import structlog
 
+from ...core.circuit_breaker import CircuitBreaker
+from ...core.config import settings
+
 logger = structlog.get_logger(__name__)
+
+_search_circuit_breaker: CircuitBreaker | None = None
+
+
+def get_search_circuit_breaker() -> CircuitBreaker:
+    """Get or create a circuit breaker for search clients.
+
+    Reuse Perplexity CB thresholds for consistency until
+    dedicated settings are introduced.
+    """
+    global _search_circuit_breaker
+    if _search_circuit_breaker is None:
+        _search_circuit_breaker = CircuitBreaker(
+            failure_threshold=settings.PERPLEXITY_CIRCUIT_BREAKER_THRESHOLD,
+            timeout=float(settings.PERPLEXITY_CIRCUIT_BREAKER_TIMEOUT),
+        )
+    return _search_circuit_breaker
 
 
 class SearxNGClient:
@@ -118,61 +138,77 @@ class SearxNGClient:
         if pageno > 1:
             params["pageno"] = pageno
         # image_proxy intentionally omitted (not needed yet)
-        logger.info("SearxNG query params built", params={k: v for k, v in params.items() if k != 'q'})
+        logger.info(
+            "SearxNG query params built", params={k: v for k, v in params.items() if k != "q"}
+        )
 
-        last_error: str | None = None
-        response: httpx.Response | None = None
-        for host in self.fallback_hosts:
+        async def _do_search() -> list[dict[str, Any]]:
+            last_error: str | None = None
+            response: httpx.Response | None = None
+            for host in self.fallback_hosts:
+                try:
+                    response = await self._get(
+                        f"{host}/search", params=params, timeout=self.timeout
+                    )
+                    if response.status_code == 200:
+                        break  # success
+                    else:
+                        logger.warning(
+                            "SearxNG non-200 on host", host=host, status=response.status_code
+                        )
+                except httpx.TimeoutException:
+                    logger.warning("SearxNG timeout", host=host, query=query)
+                    last_error = "timeout"
+                except httpx.ConnectError as e:
+                    logger.error("SearxNG connection error", host=host, error=str(e))
+                    last_error = str(e)
+                except Exception as e:  # Unexpected
+                    logger.error("SearxNG unexpected error", host=host, error=str(e))
+                    last_error = str(e)
+            if response is None:
+                logger.error("SearxNG all host attempts failed", error=last_error)
+                return []
+
+            if response.status_code != 200:
+                # After all attempts still non-200
+                logger.warning("SearxNG final non-200 status", status=response.status_code)
+                return []
+
             try:
-                response = await self._client.get(f"{host}/search", params=params, timeout=self.timeout)
-                if response.status_code == 200:
-                    break  # success
-                else:
-                    logger.warning("SearxNG non-200 on host", host=host, status=response.status_code)
-            except httpx.TimeoutException:
-                logger.warning("SearxNG timeout", host=host, query=query)
-                last_error = "timeout"
-            except httpx.ConnectError as e:
-                logger.error("SearxNG connection error", host=host, error=str(e))
-                last_error = str(e)
-            except Exception as e:  # Unexpected
-                logger.error("SearxNG unexpected error", host=host, error=str(e))
-                last_error = str(e)
-        if response is None:
-            logger.error("SearxNG all host attempts failed", error=last_error)
-            return []
+                data = response.json()
+            except Exception as e:  # Malformed JSON
+                logger.error("SearxNG JSON parse error", error=str(e))
+                return []
 
-        if response.status_code != 200:
-            # After all attempts still non-200
-            logger.warning("SearxNG final non-200 status", status=response.status_code)
-            return []
+            raw_results = data.get("results", [])
+            if not isinstance(raw_results, list):
+                logger.warning("SearxNG results not a list")
+                return []
 
-        try:
-            data = response.json()
-        except Exception as e:  # Malformed JSON
-            logger.error("SearxNG JSON parse error", error=str(e))
-            return []
+            normalized: list[dict[str, Any]] = []
+            for item in raw_results:
+                if not isinstance(item, dict):
+                    continue
+                normalized.append(
+                    {
+                        "title": item.get("title", ""),
+                        "url": item.get("url", ""),
+                        "content": item.get("content", ""),
+                    }
+                )
+                if len(normalized) >= limit:
+                    break
 
-        raw_results = data.get("results", [])
-        if not isinstance(raw_results, list):
-            logger.warning("SearxNG results not a list")
-            return []
+            return normalized
 
-        normalized: list[dict[str, Any]] = []
-        for item in raw_results:
-            if not isinstance(item, dict):
-                continue
-            normalized.append(
-                {
-                    "title": item.get("title", ""),
-                    "url": item.get("url", ""),
-                    "content": item.get("content", ""),
-                }
-            )
-            if len(normalized) >= limit:
-                break
-
-        return normalized
+        breaker = get_search_circuit_breaker()
+        return await breaker.call_with_retries(
+            _do_search,
+            retries=3,
+            backoff_base=0.5,
+            backoff_factor=2.0,
+            fallback=lambda: [],
+        )
 
 
 __all__ = ["SearxNGClient"]
