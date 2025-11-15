@@ -228,6 +228,19 @@ class Settings(BaseSettings):
         default=True, description="Enable fallback to secondary LLM on primary failure"
     )
 
+    # Cascading Fallback Configuration
+    ENABLE_CASCADING_FALLBACK: bool = Field(
+        default=True,
+        description="Enable 3-tier cascading fallback: SearxNG → SerperDev → Perplexity",
+    )
+    MIN_ANSWER_TOKENS: int = Field(
+        default=160, ge=50, le=1000, description="Minimum token count for acceptable answer quality"
+    )
+    PERPLEXITY_AS_FALLBACK: bool = Field(
+        default=True,
+        description="Use Perplexity as ultimate fallback (Tier 3) when answer quality is poor",
+    )
+
     # Two-Pass Synthesis Configuration
     HALLUCINATION_THRESHOLD: float = Field(
         default=0.1,

@@ -27,6 +27,8 @@ docs/
 ├── TWO_PASS_SYNTHESIS_IMPLEMENTATION.md # Two-pass synthesis feature
 ├── TEST_EXECUTION_SUMMARY.md          # Test execution results
 ├── SEARCH_ACCURACY_ANALYSIS.md        # Search accuracy metrics
+├── SEARCH_AGENT_IMPROVEMENTS.md       # Search agent enhancement opportunities
+├── CASCADING_FALLBACK_IMPLEMENTATION.md # Tier-based fallback system (P0)
 ├── NO_API_CALLS_FIX.md                # API call prevention guide
 └── CODEBASE_CLEANUP.md                # Project organization guide
 ```
@@ -84,6 +86,8 @@ Located in `docs/api/`
 | DIVERSITY_ENABLED_SUMMARY.md | Source diversity scoring feature documentation |
 | QUERY_EXPANSION_SUMMARY.md | Query expansion implementation details |
 | TWO_PASS_SYNTHESIS_IMPLEMENTATION.md | Two-pass synthesis with hallucination correction |
+| CASCADING_FALLBACK_IMPLEMENTATION.md | 3-tier fallback system (SearxNG→SerperDev→Perplexity) |
+| SEARCH_AGENT_IMPROVEMENTS.md | Comprehensive search agent enhancement roadmap |
 
 ### Testing & Quality
 | File | Purpose |

@@ -48,8 +48,10 @@ from src.utils.language_detector import detect_language, get_language_name
 from src.utils.query_normalizer import normalize_query
 from src.utils.temporal_validator import TemporalValidator
 from src.utils.claim_grounder import ClaimGrounder
+from src.utils.response_validator import ResponseValidator, ResponseQuality
 from src.models.citation import Citation
 from src.agents.decomposition_validator import DecompositionValidator
+from src.services.search.perplexity_search import perplexity_search
 
 # =============================================================================
 # Pydantic Models for Structured Output
@@ -285,6 +287,9 @@ class SearchAgent:
         self.max_sources = deps.max_sources
         self.timeout = deps.timeout
         self.temporal_validator = TemporalValidator()
+        self.response_validator = ResponseValidator(
+            min_tokens=settings.MIN_ANSWER_TOKENS, min_sources=2
+        )
 
         # Log search configuration
         # SearxNG is now the primary search backend; SerperDev acts as a fallback when available
@@ -296,6 +301,7 @@ class SearchAgent:
             )
 
         logger.info(f"✅ Temporal validation enabled with post-retrieval filtering")
+        logger.info(f"✅ Cascading fallback enabled: SearxNG → SerperDev → Perplexity")
 
     async def decompose_query(self, query: str) -> list[SubQuery]:
         """Decompose complex query into focused sub-queries using Pydantic AI.
@@ -2720,6 +2726,240 @@ Generate the corrected answer:"""
         answer = f"Based on the search results:\n\n{' '.join(snippets)}"
         return answer
 
+    # =========================================================================
+    # Cascading Fallback Strategy (SearxNG → SerperDev → Perplexity)
+    # =========================================================================
+
+    async def _execute_search_tier(
+        self, tier: str, query: str, sub_queries: list[SubQuery], mode: SearchMode
+    ) -> tuple[str, list[SearchSource], float | None, int | None]:
+        """Execute search in a specific tier.
+
+        Args:
+            tier: Search tier ("searxng", "serperdev", "perplexity")
+            query: Original user query
+            sub_queries: Decomposed sub-queries
+            mode: Search mode configuration
+
+        Returns:
+            Tuple of (answer, sources, grounding_score, hallucination_count)
+        """
+        logger.info(f"🔍 Tier {tier.upper()}: Starting search")
+
+        if tier == "perplexity":
+            # Tier 3: Perplexity - returns ready-to-use answer
+            return await self._execute_perplexity_fallback(query)
+
+        # Tier 1 (searxng) or Tier 2 (serperdev): Execute normal search pipeline
+        raw_sources = await self.coordinate_search(sub_queries)
+
+        logger.info(f"📊 Tier {tier.upper()}: Got {len(raw_sources)} raw sources")
+
+        # Enrich with content if enabled
+        if mode.config.enable_crawling:
+            enriched_sources = await self.enrich_sources_with_content(raw_sources)
+        else:
+            enriched_sources = raw_sources
+
+        # Temporal validation
+        target_year = None
+        temporal_scope = "any"
+        for sq in sub_queries:
+            if sq.specific_year:
+                target_year = sq.specific_year
+                break
+            elif sq.temporal_scope != "any":
+                temporal_scope = sq.temporal_scope
+
+        validated_sources = self.temporal_validator.filter_and_rerank_sources(
+            sources=enriched_sources,
+            target_year=target_year,
+            temporal_scope=temporal_scope,
+            strict_filtering=False,
+        )
+
+        # Rank results
+        ranked_sources = await self.rank_results(validated_sources, query)
+
+        # Generate answer
+        answer, grounding_score, hallucination_count = await self.generate_answer(
+            query, ranked_sources, sub_queries
+        )
+
+        logger.info(
+            f"✅ Tier {tier.upper()}: Generated answer "
+            f"({len(answer)} chars, {len(ranked_sources)} sources)"
+        )
+
+        return answer, ranked_sources, grounding_score, hallucination_count
+
+    async def _execute_perplexity_fallback(
+        self, query: str
+    ) -> tuple[str, list[SearchSource], float | None, int | None]:
+        """Execute Perplexity as ultimate fallback.
+
+        Args:
+            query: User query
+
+        Returns:
+            Tuple of (answer, sources, grounding_score, hallucination_count)
+        """
+        logger.info("🚨 TIER 3 - PERPLEXITY FALLBACK")
+
+        try:
+            # Call Perplexity API
+            result = await perplexity_search(query)
+
+            # Extract answer and convert citations to SearchSource
+            answer = result.get("content", "")
+            citations = result.get("citations", [])
+
+            # Convert Perplexity citations to SearchSource format
+            sources = []
+            for idx, url in enumerate(citations[:10], 1):
+                sources.append(
+                    SearchSource(
+                        title=f"Source {idx}",
+                        url=url,
+                        snippet=f"From Perplexity search",
+                        content="",
+                        relevance=0.9,
+                        source_type="perplexity",
+                    )
+                )
+
+            logger.info(
+                f"✅ Perplexity fallback success: {len(answer)} chars, {len(sources)} citations"
+            )
+
+            return answer, sources, None, None
+
+        except Exception as e:
+            logger.error(f"❌ Perplexity fallback failed: {e}")
+
+            # Ultimate fallback: minimal answer
+            fallback_answer = (
+                "I apologize, but all search sources are currently unavailable. "
+                "Please try again in a moment."
+            )
+            return fallback_answer, [], None, None
+
+    def _check_answer_quality(
+        self, answer: str, sources: list[SearchSource], tier: str
+    ) -> ResponseQuality:
+        """Check if answer meets quality thresholds.
+
+        Args:
+            answer: Generated answer
+            sources: Sources used
+            tier: Search tier name (for logging)
+
+        Returns:
+            ResponseQuality assessment
+        """
+        quality = self.response_validator.validate(answer=answer, source_count=len(sources))
+
+        logger.info(
+            f"📊 Tier {tier.upper()} Quality Check: "
+            f"sufficient={quality.is_sufficient}, "
+            f"tokens={quality.token_count}, "
+            f"confidence={quality.confidence_score:.2f}"
+        )
+
+        if not quality.is_sufficient:
+            logger.warning(
+                f"⚠️ Tier {tier.upper()} quality issues: {', '.join([i.value for i in quality.issues])}"
+            )
+
+        return quality
+
+    async def _generate_answer_with_fallback(
+        self,
+        query: str,
+        sub_queries: list[SubQuery],
+        initial_sources: list[SearchSource],
+        mode: SearchMode,
+    ) -> tuple[str, list[SearchSource], float | None, int | None]:
+        """Generate answer with cascading fallback strategy.
+
+        Tier 1: SearxNG (already executed) → Generate answer → Check quality
+        Tier 2: SerperDev → Generate answer → Check quality
+        Tier 3: Perplexity → Use Perplexity's answer directly
+
+        Args:
+            query: User query
+            sub_queries: Decomposed sub-queries
+            initial_sources: Sources from Tier 1 (SearxNG)
+            mode: Search mode
+
+        Returns:
+            Tuple of (answer, sources, grounding_score, hallucination_count)
+        """
+        logger.info("🔄 CASCADING FALLBACK: Starting quality-based search cascade")
+
+        # Tier 1: Try with existing SearxNG sources
+        answer, grounding_score, hallucination_count = await self.generate_answer(
+            query, initial_sources, sub_queries
+        )
+
+        quality = self._check_answer_quality(answer, initial_sources, "searxng")
+
+        if quality.is_sufficient:
+            logger.info("✅ TIER 1 (SearxNG) - Quality sufficient, using this answer")
+            return answer, initial_sources, grounding_score, hallucination_count
+
+        # Tier 2: Fallback to SerperDev if available
+        if self.deps.serperdev_api_key and self.deps.serperdev_api_key.strip():
+            logger.warning(
+                f"⚠️ TIER 1 failed quality check (tokens={quality.token_count}, "
+                f"issues={[i.value for i in quality.issues]}), trying TIER 2 (SerperDev)"
+            )
+
+            try:
+                (
+                    answer,
+                    sources,
+                    grounding_score,
+                    hallucination_count,
+                ) = await self._execute_search_tier(
+                    tier="serperdev", query=query, sub_queries=sub_queries, mode=mode
+                )
+
+                quality = self._check_answer_quality(answer, sources, "serperdev")
+
+                if quality.is_sufficient:
+                    logger.info("✅ TIER 2 (SerperDev) - Quality sufficient, using this answer")
+                    return answer, sources, grounding_score, hallucination_count
+
+            except Exception as e:
+                logger.error(f"❌ TIER 2 (SerperDev) failed: {e}")
+
+        # Tier 3: Ultimate fallback to Perplexity if enabled
+        if settings.PERPLEXITY_AS_FALLBACK and settings.PERPLEXITY_API_KEY:
+            logger.warning(
+                f"⚠️ TIER 2 failed or unavailable, trying TIER 3 (Perplexity) - ultimate fallback"
+            )
+
+            try:
+                (
+                    answer,
+                    sources,
+                    grounding_score,
+                    hallucination_count,
+                ) = await self._execute_perplexity_fallback(query=query)
+
+                logger.info("✅ TIER 3 (Perplexity) - Ultimate fallback used")
+                return answer, sources, grounding_score, hallucination_count
+
+            except Exception as e:
+                logger.error(f"❌ TIER 3 (Perplexity) failed: {e}")
+
+        # All tiers failed - return best available answer (Tier 1)
+        logger.warning(
+            "⚠️ All fallback tiers exhausted, returning TIER 1 answer despite quality issues"
+        )
+        return answer, initial_sources, grounding_score, hallucination_count
+
     async def validate_output(self, output: SearchOutput) -> SearchOutput:
         """Validate search output meets quality criteria.
 
@@ -2863,10 +3103,24 @@ Generate the corrected answer:"""
             # 4. Rank results (reranking controlled by mode config)
             ranked_sources = await self.rank_results(validated_sources, query)
 
-            # 5. Generate answer from sources
-            answer, grounding_score, hallucination_count = await self.generate_answer(
-                query, ranked_sources, sub_queries
-            )
+            # 5. Generate answer with cascading fallback if enabled
+            if settings.ENABLE_CASCADING_FALLBACK:
+                (
+                    answer,
+                    ranked_sources,
+                    grounding_score,
+                    hallucination_count,
+                ) = await self._generate_answer_with_fallback(
+                    query=query,
+                    sub_queries=sub_queries,
+                    initial_sources=ranked_sources,
+                    mode=search_mode,
+                )
+            else:
+                # Standard answer generation without fallback
+                answer, grounding_score, hallucination_count = await self.generate_answer(
+                    query, ranked_sources, sub_queries
+                )
 
             execution_time = time.time() - start_time
 
