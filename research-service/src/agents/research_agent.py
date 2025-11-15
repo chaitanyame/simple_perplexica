@@ -17,6 +17,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..core.config import settings
 from ..core.search_modes import SearchMode, get_mode_from_string
 from ..models.citation import Citation
 from ..rag.vector_store_repository import VectorStoreRepository
@@ -148,10 +149,22 @@ Complexity levels:
 
         user_prompt = f"""Create a research plan for: "{query}"
 
-Return JSON with:
-- steps: List of ResearchStep objects
-- estimated_time: Total time in seconds
-- complexity: simple/medium/complex"""
+Return JSON with this EXACT structure:
+{{
+  "steps": [
+    {{
+      "step_number": 1,
+      "description": "Clear description of what to research",
+      "search_query": "Specific search query for this step",
+      "expected_outcome": "What we expect to find",
+      "depends_on": []
+    }}
+  ],
+  "estimated_time": 60.0,
+  "complexity": "simple"
+}}
+
+CRITICAL: Each step MUST have all fields: step_number, description, search_query, expected_outcome, depends_on"""
 
         response = await self.llm_client.chat(
             messages=[
@@ -188,17 +201,52 @@ Return JSON with:
             estimated_time = 60.0
             complexity = "medium"
 
-        # Build ResearchStep objects
-        steps = [
-            ResearchStep(
-                step_number=step["step_number"],
-                description=step["description"],
-                search_query=step["search_query"],
-                expected_outcome=step["expected_outcome"],
-                depends_on=step.get("depends_on", []),
-            )
-            for step in steps_data
-        ]
+        # Build ResearchStep objects with validation
+        steps = []
+        for idx, step in enumerate(steps_data):
+            try:
+                # Validate required fields exist
+                if not all(
+                    key in step
+                    for key in ["step_number", "description", "search_query", "expected_outcome"]
+                ):
+                    logger.warning(
+                        f"Step {idx} missing required fields, skipping",
+                        step=step,
+                        required_fields=[
+                            "step_number",
+                            "description",
+                            "search_query",
+                            "expected_outcome",
+                        ],
+                    )
+                    continue
+
+                steps.append(
+                    ResearchStep(
+                        step_number=step["step_number"],
+                        description=step["description"],
+                        search_query=step["search_query"],
+                        expected_outcome=step["expected_outcome"],
+                        depends_on=step.get("depends_on", []),
+                    )
+                )
+            except (KeyError, TypeError) as e:
+                logger.warning(f"Failed to parse step {idx}: {e}", step=step)
+                continue
+
+        # If no valid steps, create fallback single-step plan
+        if not steps:
+            logger.warning("No valid steps generated, creating fallback plan", query=query)
+            steps = [
+                ResearchStep(
+                    step_number=1,
+                    description=f"Research: {query}",
+                    search_query=query,
+                    expected_outcome="Comprehensive answer to the query",
+                    depends_on=[],
+                )
+            ]
 
         return ResearchPlan(
             original_query=query,
@@ -413,8 +461,12 @@ Return JSON with:
         Raises:
             ValueError: If synthesis fails
         """
+        import structlog
+
         from .prompt_strategy import should_use_dynamic_prompts
         from .system_prompt_generator import SystemPromptGenerator
+
+        logger = structlog.get_logger(__name__)
 
         # Determine which prompt strategy to use
         use_dynamic = should_use_dynamic_prompts(prompt_strategy)
@@ -518,10 +570,8 @@ EXTRACT AND EXPLAIN ALL INFORMATION:
 Write detailed synthesis with descriptions for every item AND their dates:"""
 
         # Use synthesis model for final synthesis generation (if configured)
-        import structlog
         from ..core.config import settings as config_settings
 
-        logger = structlog.get_logger(__name__)
         original_model = self.llm_client.model
         if config_settings.SYNTHESIS_LLM_MODEL:
             self.llm_client.model = config_settings.SYNTHESIS_LLM_MODEL
@@ -621,11 +671,12 @@ Write detailed synthesis with descriptions for every item AND their dates:"""
                         hallucination_rate = grounding_result.hallucination_count / len(
                             grounding_result.claims
                         )
-                        if hallucination_rate > self.settings.HALLUCINATION_THRESHOLD:
-                            self.tracer.log(
+                        if hallucination_rate > settings.HALLUCINATION_THRESHOLD:
+                            logger.warning(
                                 "⚠️ High hallucination rate detected",
                                 rate=f"{hallucination_rate:.1%}",
                                 count=grounding_result.hallucination_count,
+                                threshold=settings.HALLUCINATION_THRESHOLD,
                             )
                 else:
                     logger.warning("⚠️ Hallucination detection failed, skipping quality check")
