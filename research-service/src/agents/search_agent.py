@@ -2556,31 +2556,35 @@ Generate the corrected answer:"""
                                         corrected_answer, citations
                                     )
 
-                                    improvement = (
-                                        grounding_result.hallucination_count
-                                        - corrected_grounding.hallucination_count
-                                    )
-
-                                    if improvement > 0:
-                                        logger.info(
-                                            f"✅ REGENERATION SUCCESSFUL: Reduced hallucinations by {improvement}"
-                                        )
-                                        logger.info(
-                                            f"📊 New Grounding Score: {corrected_grounding.overall_grounding:.2f} "
-                                            f"(was {grounding_score:.2f})"
+                                    # Check if re-grounding was successful
+                                    if corrected_grounding and corrected_grounding.claims:
+                                        improvement = (
+                                            grounding_result.hallucination_count
+                                            - corrected_grounding.hallucination_count
                                         )
 
-                                        # Use corrected answer
-                                        answer = corrected_answer
-                                        grounding_score = corrected_grounding.overall_grounding
-                                        hallucination_count = (
-                                            corrected_grounding.hallucination_count
-                                        )
-                                        grounding_result = corrected_grounding
+                                        if improvement > 0:
+                                            logger.info(
+                                                f"✅ REGENERATION SUCCESSFUL: Reduced hallucinations by {improvement}"
+                                            )
+                                            logger.info(
+                                                f"📊 New Grounding Score: {corrected_grounding.overall_grounding:.2f} "
+                                                f"(was {grounding_score:.2f})"
+                                            )
+
+                                            # Use corrected answer
+                                            answer = corrected_answer
+                                            grounding_score = corrected_grounding.overall_grounding
+                                            hallucination_count = (
+                                                corrected_grounding.hallucination_count
+                                            )
+                                            grounding_result = corrected_grounding
+                                        else:
+                                            logger.warning(
+                                                "⚠️ Regeneration did not improve quality - keeping original"
+                                            )
                                     else:
-                                        logger.warning(
-                                            f"⚠️ Regeneration did not improve quality - keeping original"
-                                        )
+                                        logger.warning("⚠️ Regeneration grounding failed, keeping original")
 
                             except Exception as regen_error:
                                 logger.error(f"❌ Regeneration failed: {regen_error}")

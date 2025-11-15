@@ -593,48 +593,42 @@ Write detailed synthesis with descriptions for every item AND their dates:"""
                     grounding_threshold=0.6,  # Claims need 60% confidence to be grounded
                     similarity_threshold=0.7,  # Sources need 70% similarity to match
                 )
-                
+
                 grounding_result = await grounder.ground_synthesis(synthesis, citations)
-                
-                # Log grounding metrics
-                logger.info(
-                    "Citation grounding complete",
-                    overall_grounding=f"{grounding_result.overall_grounding:.2f}",
-                    total_claims=len(grounding_result.claims),
-                    grounded_claims=sum(1 for c in grounding_result.claims if c.is_grounded),
-                    unsupported_claims=len(grounding_result.unsupported_claims),
-                    hallucination_count=grounding_result.hallucination_count,
-                )
-                
-                # Warn if high hallucination rate
-                if grounding_result.hallucination_count > 0:
-                    hallucination_rate = grounding_result.hallucination_count / len(grounding_result.claims)
-                    if hallucination_rate > 0.2:  # More than 20% hallucinations
-                        logger.warning(
-                            "⚠️ High hallucination rate detected",
-                            rate=f"{hallucination_rate:.1%}",
-                            count=grounding_result.hallucination_count,
-                            unsupported_claims=[c.text[:100] for c in grounding_result.unsupported_claims[:3]],
+
+                if grounding_result:
+                    # Log grounding metrics
+                    logger.info(
+                        "Citation grounding complete",
+                        overall_grounding=f"{grounding_result.overall_grounding:.2f}",
+                        total_claims=len(grounding_result.claims),
+                        grounded_claims=sum(
+                            1 for c in grounding_result.claims if c.is_grounded
+                        ),
+                        unsupported_claims=len(grounding_result.unsupported_claims),
+                        hallucination_count=grounding_result.hallucination_count,
+                    )
+
+                    # Warn if high hallucination rate
+                    if (
+                        grounding_result.hallucination_count > 0
+                        and grounding_result.claims
+                    ):
+                        hallucination_rate = (
+                            grounding_result.hallucination_count
+                            / len(grounding_result.claims)
                         )
-                
-                # Log to Langfuse if available
-                if self.tracer:
-                    try:
-                        grounding_span = self.tracer.create_span(
-                            name="citation_grounding",
-                            metadata={
-                                "overall_grounding": grounding_result.overall_grounding,
-                                "total_claims": len(grounding_result.claims),
-                                "grounded_claims": sum(1 for c in grounding_result.claims if c.is_grounded),
-                                "hallucination_count": grounding_result.hallucination_count,
-                                "grounding_threshold": 0.6,
-                            },
-                        )
-                        if grounding_span:
-                            self.tracer.end_span()
-                    except Exception as e:
-                        logger.warning(f"Failed to log grounding to Langfuse: {e}")
-                
+                        if hallucination_rate > self.settings.HALLUCINATION_THRESHOLD:
+                            self.tracer.log(
+                                "⚠️ High hallucination rate detected",
+                                rate=f"{hallucination_rate:.1%}",
+                                count=grounding_result.hallucination_count,
+                            )
+                else:
+                    logger.warning(
+                        "⚠️ Hallucination detection failed, skipping quality check"
+                    )
+
             except Exception as e:
                 logger.error(f"Citation grounding failed: {e}", exc_info=True)
                 # Don't fail the entire synthesis if grounding fails
