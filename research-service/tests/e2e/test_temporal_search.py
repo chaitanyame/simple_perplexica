@@ -238,4 +238,6 @@ class TestTemporalResearchE2E:
         # Verify answer mentions relevant content
         assert "LLM" in data["answer"] or "agent" in data["answer"]
 
-        print(f"✅ Research mode with temporal query: {data['iterations']} iterations, {len(data['sources'])} sources")
+        print(
+            f"✅ Research mode with temporal query: {data['iterations']} iterations, {len(data['sources'])} sources"
+        )
