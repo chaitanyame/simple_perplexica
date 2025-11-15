@@ -126,7 +126,10 @@ class QueryDecomposition(BaseModel):
     """
 
     sub_queries: list[SubQuery] = Field(
-        ..., min_length=1, max_length=10, description="1-10 focused sub-queries (more for complex structured prompts)"
+        ...,
+        min_length=1,
+        max_length=10,
+        description="1-10 focused sub-queries (more for complex structured prompts)",
     )
 
 
@@ -590,7 +593,7 @@ Respond with valid JSON only."""
             fallback_query = query[:480] + "..." if len(query) > 480 else query
             if len(query) > 480:
                 logger.warning(f"⚠️ Query truncated for fallback: {len(query)} -> 480 chars")
-            
+
             return [
                 SubQuery(
                     query=fallback_query,
@@ -2457,10 +2460,12 @@ Write a detailed answer with full explanations for everything:"""
                     grounding_result = await claim_grounder.ground_synthesis(answer, citations)
                     grounding_score = grounding_result.overall_grounding
                     hallucination_count = grounding_result.hallucination_count
-                    
+
                     # Safety check for claims
                     if not grounding_result.claims:
-                        logger.warning("⚠️ No claims extracted from answer, skipping hallucination detection")
+                        logger.warning(
+                            "⚠️ No claims extracted from answer, skipping hallucination detection"
+                        )
                         grounding_result.claims = []
 
                     logger.info(f"✅ HALLUCINATION DETECTION COMPLETE")
@@ -2584,7 +2589,9 @@ Generate the corrected answer:"""
                                                 "⚠️ Regeneration did not improve quality - keeping original"
                                             )
                                     else:
-                                        logger.warning("⚠️ Regeneration grounding failed, keeping original")
+                                        logger.warning(
+                                            "⚠️ Regeneration grounding failed, keeping original"
+                                        )
 
                             except Exception as regen_error:
                                 logger.error(f"❌ Regeneration failed: {regen_error}")

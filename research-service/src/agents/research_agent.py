@@ -99,11 +99,7 @@ class ResearchAgent:
         self.max_iterations = deps.max_iterations
         self.timeout = deps.timeout
 
-    async def generate_plan(
-        self, 
-        query: str,
-        prompt_strategy: str | None = None
-    ) -> ResearchPlan:
+    async def generate_plan(self, query: str, prompt_strategy: str | None = None) -> ResearchPlan:
         """Generate multi-step research plan.
 
         Args:
@@ -118,19 +114,20 @@ class ResearchAgent:
         """
         import structlog
         import json
+
         logger = structlog.get_logger(__name__)
-        
+
         from .prompt_strategy import should_use_dynamic_prompts
         from .system_prompt_generator import SystemPromptGenerator
-        
+
         # Determine which prompt strategy to use
         use_dynamic = should_use_dynamic_prompts(prompt_strategy)
-        
+
         if use_dynamic:
             # Use dynamic query-aware prompt
             system_prompt = SystemPromptGenerator.generate(
                 query=query,
-                mode="research"  # Planning is part of research
+                mode="research",  # Planning is part of research
             )
             logger.info("Using dynamic system prompt for plan generation", query=query[:50])
         else:
@@ -167,7 +164,7 @@ Return JSON with:
         # Extract plan data - response has "content" key with JSON string
         # Import extract_json_from_markdown from search_agent
         from .search_agent import extract_json_from_markdown
-        
+
         if isinstance(response, dict) and "content" in response:
             content_str = str(response["content"])
             logger.debug("LLM response content", content_preview=content_str[:200])
@@ -233,14 +230,21 @@ Return JSON with:
         except TimeoutError as e:
             # Handle timeout gracefully
             import structlog
+
             logger = structlog.get_logger(__name__)
             logger.warning("Search timeout during evidence gathering", query=query, error=str(e))
             return []
         except Exception as e:
             # Handle other search errors
             import structlog
+
             logger = structlog.get_logger(__name__)
-            logger.error("Search failed during evidence gathering", query=query, error=str(e), error_type=type(e).__name__)
+            logger.error(
+                "Search failed during evidence gathering",
+                query=query,
+                error=str(e),
+                error_type=type(e).__name__,
+            )
             return []
 
     async def store_sources_to_vector_db(
@@ -387,8 +391,8 @@ Return JSON with:
         return citations
 
     async def synthesize_findings(
-        self, 
-        citations: list[Citation], 
+        self,
+        citations: list[Citation],
         query: str,
         enable_grounding: bool = True,
         prompt_strategy: str | None = None,
@@ -411,15 +415,15 @@ Return JSON with:
         """
         from .prompt_strategy import should_use_dynamic_prompts
         from .system_prompt_generator import SystemPromptGenerator
-        
+
         # Determine which prompt strategy to use
         use_dynamic = should_use_dynamic_prompts(prompt_strategy)
-        
+
         if use_dynamic:
             # Use dynamic query-aware prompt
             system_prompt = SystemPromptGenerator.generate(
                 query=query,
-                mode="research"  # Synthesis is part of research
+                mode="research",  # Synthesis is part of research
             )
             logger.info("Using dynamic system prompt for synthesis", query=query[:50])
         else:
@@ -516,14 +520,17 @@ Write detailed synthesis with descriptions for every item AND their dates:"""
         # Use synthesis model for final synthesis generation (if configured)
         import structlog
         from ..core.config import settings as config_settings
+
         logger = structlog.get_logger(__name__)
         original_model = self.llm_client.model
         if config_settings.SYNTHESIS_LLM_MODEL:
             self.llm_client.model = config_settings.SYNTHESIS_LLM_MODEL
-            logger.info(f"🤖 Using synthesis model for final generation: {config_settings.SYNTHESIS_LLM_MODEL}")
+            logger.info(
+                f"🤖 Using synthesis model for final generation: {config_settings.SYNTHESIS_LLM_MODEL}"
+            )
         else:
             logger.info(f"🤖 Using research model for final generation: {original_model}")
-        
+
         # ============ FULL PROMPT LOGGING ============
         logger.info("=" * 80)
         logger.info("📋 FULL LLM INPUT (RESEARCH - SYNTHESIS)")
@@ -534,7 +541,7 @@ Write detailed synthesis with descriptions for every item AND their dates:"""
         logger.info("USER PROMPT:")
         logger.info(user_prompt)
         logger.info("=" * 80)
-        
+
         response = await self.llm_client.chat(
             messages=[
                 {"role": "system", "content": system_prompt},
@@ -543,14 +550,14 @@ Write detailed synthesis with descriptions for every item AND their dates:"""
             temperature=0.3,
             max_tokens=2048,  # Allow longer, more detailed responses
         )
-        
+
         # Restore original model
         self.llm_client.model = original_model
 
         # Extract synthesis - fix bug: response has "content" key, not "synthesis"
         if isinstance(response, dict) and "content" in response:
             synthesis: str = str(response["content"])
-            
+
             # ============ FULL RESPONSE LOGGING ============
             logger.info("=" * 80)
             logger.info("📥 FULL LLM OUTPUT (RESEARCH - SYNTHESIS)")
@@ -563,10 +570,12 @@ Write detailed synthesis with descriptions for every item AND their dates:"""
 
         # Ensure minimum length
         if len(synthesis) < 200:
-            logger.warning(f"⚠️ Synthesis too short ({len(synthesis)} chars), requesting more detail")
+            logger.warning(
+                f"⚠️ Synthesis too short ({len(synthesis)} chars), requesting more detail"
+            )
             # Try again with more explicit instructions
             retry_prompt = f"{user_prompt}\n\nIMPORTANT: Provide a DETAILED synthesis of at least 400 words. Do not summarize briefly."
-            
+
             # Use synthesis model again for retry (if configured)
             if config_settings.SYNTHESIS_LLM_MODEL:
                 self.llm_client.model = config_settings.SYNTHESIS_LLM_MODEL
@@ -580,7 +589,7 @@ Write detailed synthesis with descriptions for every item AND their dates:"""
             )
             # Restore original model
             self.llm_client.model = original_model
-            
+
             if isinstance(response, dict) and "content" in response:
                 synthesis = str(response["content"])
 
@@ -602,21 +611,15 @@ Write detailed synthesis with descriptions for every item AND their dates:"""
                         "Citation grounding complete",
                         overall_grounding=f"{grounding_result.overall_grounding:.2f}",
                         total_claims=len(grounding_result.claims),
-                        grounded_claims=sum(
-                            1 for c in grounding_result.claims if c.is_grounded
-                        ),
+                        grounded_claims=sum(1 for c in grounding_result.claims if c.is_grounded),
                         unsupported_claims=len(grounding_result.unsupported_claims),
                         hallucination_count=grounding_result.hallucination_count,
                     )
 
                     # Warn if high hallucination rate
-                    if (
-                        grounding_result.hallucination_count > 0
-                        and grounding_result.claims
-                    ):
-                        hallucination_rate = (
-                            grounding_result.hallucination_count
-                            / len(grounding_result.claims)
+                    if grounding_result.hallucination_count > 0 and grounding_result.claims:
+                        hallucination_rate = grounding_result.hallucination_count / len(
+                            grounding_result.claims
                         )
                         if hallucination_rate > self.settings.HALLUCINATION_THRESHOLD:
                             self.tracer.log(
@@ -625,9 +628,7 @@ Write detailed synthesis with descriptions for every item AND their dates:"""
                                 count=grounding_result.hallucination_count,
                             )
                 else:
-                    logger.warning(
-                        "⚠️ Hallucination detection failed, skipping quality check"
-                    )
+                    logger.warning("⚠️ Hallucination detection failed, skipping quality check")
 
             except Exception as e:
                 logger.error(f"Citation grounding failed: {e}", exc_info=True)
@@ -740,31 +741,38 @@ Identify gaps:"""
             search_mode = SearchMode.BALANCED
         else:
             search_mode = mode
-        
+
         config = search_mode.config
-        
+
         import structlog
+
         logger = structlog.get_logger(__name__)
-        
+
         from .prompt_strategy import get_prompt_strategy_description
+
         strategy_desc = get_prompt_strategy_description(prompt_strategy or "auto")
-        
+
         logger.info(
             "Starting research with mode and prompt strategy",
             query=query,
             mode=search_mode.value,
-            prompt_strategy=strategy_desc
+            prompt_strategy=strategy_desc,
         )
 
         # Step 1: Generate plan
         logger.info("📝 Generating research plan")
         plan = await self.generate_plan(query, prompt_strategy=prompt_strategy)
-        logger.info(f"✅ Plan generated with {len(plan.steps)} steps", steps=[s.search_query for s in plan.steps])
+        logger.info(
+            f"✅ Plan generated with {len(plan.steps)} steps",
+            steps=[s.search_query for s in plan.steps],
+        )
 
         # Step 2: Execute plan steps with mode
         all_sources: list[SearchSource] = []
         for idx, step in enumerate(plan.steps, 1):
-            logger.info(f"🔍 Step {idx}/{len(plan.steps)}: Gathering evidence", query=step.search_query)
+            logger.info(
+                f"🔍 Step {idx}/{len(plan.steps)}: Gathering evidence", query=step.search_query
+            )
             # Pass mode to SearchAgent via gather_evidence
             sources = await self.gather_evidence(step.search_query, mode=search_mode)
             logger.info(f"✅ Step {idx} complete: {len(sources)} sources found")
@@ -836,7 +844,7 @@ Identify gaps:"""
         """
         import uuid
         import structlog
-        
+
         logger = structlog.get_logger(__name__)
 
         # Parse mode
@@ -846,14 +854,14 @@ Identify gaps:"""
             search_mode = SearchMode.BALANCED
         else:
             search_mode = mode
-        
+
         config = search_mode.config
-        
+
         # Override use_hybrid_search based on mode
         if not config.enable_rag:
             use_hybrid_search = False
             logger.info("RAG disabled by mode", mode=search_mode.value)
-        
+
         logger.info(
             "Starting RAG research with mode",
             query=query,
