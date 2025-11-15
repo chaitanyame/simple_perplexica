@@ -1,8 +1,16 @@
-# Simple Perplexica 🔍# Perplexica 🔍
+# Simple Perplexica 🔍
 
+> **⚠️ IMPORTANT: Legacy Services Removed (November 15, 2025)**  
+> The old `services/` directory has been removed. All functionality is now in **`research-service/`**.  
+> **📖 See [MIGRATION.md](./MIGRATION.md) for migration guide** | **🏛️ Legacy code:** `archive/legacy-services-2025-11-15` branch
 
+---
 
-**A high-performance, cost-optimized AI search API with intelligent web search capabilities.**[![GitHub Repo stars](https://img.shields.io/github/stars/ItzCrazyKns/Perplexica?style=social)](https://github.com/ItzCrazyKns/Perplexica/stargazers)
+**Advanced AI-powered research service with RAG, document processing, and multi-agent intelligence.**
+
+Built with Python, FastAPI, Pydantic AI, PostgreSQL, and OpenRouter - delivering comprehensive research capabilities with cited sources.
+
+[![GitHub Repo stars](https://img.shields.io/github/stars/ItzCrazyKns/Perplexica?style=social)](https://github.com/ItzCrazyKns/Perplexica/stargazers)
 
 [![GitHub forks](https://img.shields.io/github/forks/ItzCrazyKns/Perplexica?style=social)](https://github.com/ItzCrazyKns/Perplexica/network/members)
 

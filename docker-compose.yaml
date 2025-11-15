@@ -1,33 +1,17 @@
-services:
-  # ============================================================
-  # Primary AI Search API (Search Service)
-  # ============================================================
-  api:
-    build:
-      context: .
-      dockerfile: services/searchsvc/Dockerfile
-    image: chaitanyame/simple-perplexica:latest
-    environment:
-      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
-      - OPENROUTER_MODEL=${OPENROUTER_MODEL:-google/gemini-2.5-flash-lite}
-      - OPENROUTER_BASE_URL=${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
-      - OPENROUTER_EMBEDDING_MODEL=${OPENROUTER_EMBEDDING_MODEL:-text-embedding-3-small}
-      - SEARXNG_URL=http://searxng:8080
-      - SERPER_API_KEY=${SERPER_API_KEY}
-      - SERPERDEV_API_KEY=${SERPERDEV_API_KEY}
-      - REDIS_URL=${REDIS_URL:-redis://redis:6379}
-      - REDIS_ENABLED=${REDIS_ENABLED:-true}
-      - MEM0_ENABLED=${MEM0_ENABLED:-false}
-    ports:
-      - '3000:3001'  # Expose on port 3000 as primary service
-    depends_on:
-      - searxng
-      - redis
-    restart: unless-stopped
+# ============================================================
+# Simple Perplexica - Shared Services
+# ============================================================
+# This compose file provides shared services (SearxNG, Redis)
+# used by the research-service application.
+#
+# For the research-service API and UI, use:
+#   cd research-service && docker-compose up
+#
+# Legacy services (api, researchsvc, ui) have been removed.
+# They are preserved in branch: archive/legacy-services-2025-11-15
+# ============================================================
 
-  # ============================================================
-  # Search Engine (SearxNG)
-  # ============================================================
+services:
   # ============================================================
   # Search Engine (SearxNG)
   # ============================================================
@@ -51,39 +35,6 @@ services:
     volumes:
       - redis-data:/data
     command: redis-server --appendonly yes
-    restart: unless-stopped
-
-  # ============================================================
-  # Research Service (Content Generation)
-  # ============================================================
-  researchsvc:
-    build:
-      context: .
-      dockerfile: services/researchsvc/Dockerfile
-    environment:
-      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
-      - OPENROUTER_MODEL=${OPENROUTER_MODEL:-google/gemini-2.5-flash-lite}
-      - SERPER_API_KEY=${SERPER_API_KEY}
-      - HOST=0.0.0.0
-      - PORT=3002
-    ports:
-      - '3002:3002'
-    restart: unless-stopped
-
-  # ============================================================
-  # Optional: Streamlit UI for API Testing
-  # ============================================================
-  ui:
-    build:
-      context: .
-      dockerfile: services/searchsvc/tools/Dockerfile
-    environment:
-      - API_BASE_URL=http://api:3001
-    ports:
-      - '8501:8501'
-    depends_on:
-      - api
-      - researchsvc
     restart: unless-stopped
 
 volumes:
