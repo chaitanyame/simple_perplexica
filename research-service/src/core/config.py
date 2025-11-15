@@ -245,39 +245,6 @@ class Settings(BaseSettings):
         description="Minimum hallucination reduction to accept regenerated answer",
     )
 
-    # ========================================
-    # Source Authority Scoring Configuration
-    # ========================================
-    ENABLE_AUTHORITY_SCORING: bool = Field(
-        default=True,
-        description="Enable source authority scoring in ranking (pattern-based + Wikipedia)",
-    )
-    AUTHORITY_SCORING_WEIGHT: float = Field(
-        default=0.15,
-        ge=0.0,
-        le=0.5,
-        description="Weight of authority score in final ranking (0.15 = 15%)",
-    )
-    ENABLE_PATTERN_AUTHORITY: bool = Field(
-        default=True,
-        description="Enable pattern-based authority detection (*.gov, *.edu, docs.*, etc.)",
-    )
-    ENABLE_WIKIPEDIA_AUTHORITY: bool = Field(
-        default=True, description="Enable Wikipedia citation proxy for query-contextual authority"
-    )
-    WIKIPEDIA_CACHE_TTL: int = Field(
-        default=3600,
-        ge=300,
-        le=86400,
-        description="Wikipedia citation cache TTL in seconds (default: 1 hour)",
-    )
-    AUTHORITY_BOOST_MULTIPLIER: float = Field(
-        default=1.3,
-        ge=1.0,
-        le=2.0,
-        description="Score multiplier for authoritative sources (1.3 = 30% boost)",
-    )
-
     # API Configuration
     API_HOST: str = Field(default="0.0.0.0", description="API host")
     API_PORT: int = Field(default=8001, description="API port")

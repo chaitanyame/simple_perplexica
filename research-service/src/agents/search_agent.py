@@ -60,7 +60,7 @@ class SubQuery(BaseModel):
     """Decomposed sub-query with intent and priority.
 
     Attributes:
-        query: Focused sub-query text (1-200 chars)
+        query: Focused sub-query text (1-500 chars, can be longer for structured prompts)
         intent: Query intent classification (definition/factual/opinion)
         priority: Execution priority (1=highest, 5=lowest)
         temporal_scope: Time filter (recent/past_year/past_month/any)
@@ -68,7 +68,7 @@ class SubQuery(BaseModel):
         language: Query language ISO code (en/es/fr/de) for region-specific results
     """
 
-    query: str = Field(..., min_length=1, max_length=200)
+    query: str = Field(..., min_length=1, max_length=500)
     intent: str = Field(..., pattern=r"^(definition|factual|opinion)$")
     priority: int = Field(ge=1, le=5)
     temporal_scope: str = Field(
@@ -126,7 +126,7 @@ class QueryDecomposition(BaseModel):
     """
 
     sub_queries: list[SubQuery] = Field(
-        ..., min_length=1, max_length=5, description="1-5 focused sub-queries"
+        ..., min_length=1, max_length=10, description="1-10 focused sub-queries (more for complex structured prompts)"
     )
 
 
@@ -283,13 +283,6 @@ class SearchAgent:
         self.timeout = deps.timeout
         self.temporal_validator = TemporalValidator()
 
-        # Initialize authority scorer
-        from src.utils.authority_scorer import AuthorityScorer
-
-        self.authority_scorer = (
-            AuthorityScorer(settings) if settings.ENABLE_AUTHORITY_SCORING else None
-        )
-
         # Log search configuration
         # SearxNG is now the primary search backend; SerperDev acts as a fallback when available
         if deps.serperdev_api_key and deps.serperdev_api_key.strip():
@@ -300,15 +293,6 @@ class SearchAgent:
             )
 
         logger.info(f"✅ Temporal validation enabled with post-retrieval filtering")
-
-        # Log authority scoring configuration
-        if self.authority_scorer:
-            logger.info(
-                "🏛️ Authority scoring enabled",
-                weight=settings.AUTHORITY_SCORING_WEIGHT,
-                pattern_based=settings.ENABLE_PATTERN_AUTHORITY,
-                wikipedia_proxy=settings.ENABLE_WIKIPEDIA_AUTHORITY,
-            )
 
     async def decompose_query(self, query: str) -> list[SubQuery]:
         """Decompose complex query into focused sub-queries using Pydantic AI.
@@ -602,9 +586,14 @@ Respond with valid JSON only."""
                 temporal_scope = "any"
                 logger.info(f"  Fallback: no temporal filtering")
 
+            # Truncate query if too long (fallback for structured prompts)
+            fallback_query = query[:480] + "..." if len(query) > 480 else query
+            if len(query) > 480:
+                logger.warning(f"⚠️ Query truncated for fallback: {len(query)} -> 480 chars")
+            
             return [
                 SubQuery(
-                    query=query,
+                    query=fallback_query,
                     intent="factual",
                     priority=1,
                     temporal_scope=temporal_scope,
@@ -764,7 +753,7 @@ Respond with valid JSON only."""
                 time_range_map = {
                     "past_week": "week",
                     "past_month": "month",
-                    "recent": "month",
+                    "recent": "month",  # Use month for "recent" to catch events from past 4 weeks
                     "past_year": "year",
                 }
                 time_range = None
@@ -1272,34 +1261,6 @@ Respond with valid JSON only."""
                     reranked_count=len(rerank_results),
                 )
 
-                # Apply authority scoring boost if enabled
-                if self.authority_scorer:
-                    logger.info(
-                        "🏛️ Applying authority scoring to reranked sources",
-                        num_sources=len(filtered),
-                    )
-                    for source in filtered:
-                        authority_score = await self.authority_scorer.calculate_authority_score(
-                            source, original_query
-                        )
-                        if authority_score > 0:
-                            # Apply authority boost to final_score
-                            boost = authority_score * settings.AUTHORITY_SCORING_WEIGHT
-                            old_score = source.final_score
-                            source.final_score = min(
-                                1.0,
-                                source.final_score
-                                * (1 + boost * settings.AUTHORITY_BOOST_MULTIPLIER),
-                            )
-                            logger.debug(
-                                "Authority boost applied",
-                                url=source.url,
-                                authority_score=authority_score,
-                                boost=boost,
-                                old_final=old_score,
-                                new_final=source.final_score,
-                            )
-
             except Exception as e:
                 logger.warning(
                     "Semantic reranking failed, falling back to relevance",
@@ -1312,32 +1273,6 @@ Respond with valid JSON only."""
             # No reranking: use relevance as final_score
             for source in filtered:
                 source.final_score = source.relevance
-
-        # Apply authority scoring if enabled (for both reranked and non-reranked sources)
-        if self.authority_scorer and not self.deps.enable_reranking:
-            logger.info(
-                "🏛️ Applying authority scoring (no reranking enabled)",
-                num_sources=len(filtered),
-            )
-            for source in filtered:
-                authority_score = await self.authority_scorer.calculate_authority_score(
-                    source, original_query
-                )
-                if authority_score > 0:
-                    # Apply authority boost to final_score
-                    boost = authority_score * settings.AUTHORITY_SCORING_WEIGHT
-                    old_score = source.final_score
-                    source.final_score = min(
-                        1.0, source.final_score * (1 + boost * settings.AUTHORITY_BOOST_MULTIPLIER)
-                    )
-                    logger.debug(
-                        "Authority boost applied",
-                        url=source.url,
-                        authority_score=authority_score,
-                        boost=boost,
-                        old_final=old_score,
-                        new_final=source.final_score,
-                    )
 
         # Sort by final_score (descending)
         filtered.sort(key=lambda s: s.final_score, reverse=True)
@@ -2522,6 +2457,11 @@ Write a detailed answer with full explanations for everything:"""
                     grounding_result = await claim_grounder.ground_synthesis(answer, citations)
                     grounding_score = grounding_result.overall_grounding
                     hallucination_count = grounding_result.hallucination_count
+                    
+                    # Safety check for claims
+                    if not grounding_result.claims:
+                        logger.warning("⚠️ No claims extracted from answer, skipping hallucination detection")
+                        grounding_result.claims = []
 
                     logger.info(f"✅ HALLUCINATION DETECTION COMPLETE")
                     logger.info(f"📊 Grounding Score: {grounding_score:.2f}/1.0")
@@ -2530,7 +2470,7 @@ Write a detailed answer with full explanations for everything:"""
                     )
 
                     # ========== TWO-PASS SYNTHESIS: REGENERATION IF NEEDED ==========
-                    if grounding_result.hallucination_count > 0:
+                    if grounding_result.hallucination_count > 0 and grounding_result.claims:
                         hallucination_rate = grounding_result.hallucination_count / len(
                             grounding_result.claims
                         )

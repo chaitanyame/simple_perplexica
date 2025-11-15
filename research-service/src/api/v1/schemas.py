@@ -31,8 +31,8 @@ class SearchRequest(BaseModel):
     query: str = Field(
         ...,
         min_length=1,
-        max_length=1000,
-        description="Search query",
+        max_length=5000,
+        description="Search query (supports detailed, structured prompts)",
         examples=["What is Pydantic AI?"],
     )
     mode: Literal["speed", "balanced", "deep"] | None = Field(
@@ -181,8 +181,8 @@ class ResearchRequest(BaseModel):
     query: str = Field(
         ...,
         min_length=1,
-        max_length=1000,
-        description="Research question",
+        max_length=5000,
+        description="Research question (supports detailed, structured prompts)",
         examples=["What are AI agents and how do they work?"],
     )
     mode: Literal["speed", "balanced", "deep"] | None = Field(
@@ -425,8 +425,8 @@ class DocumentQueryRequest(BaseModel):
     query: str = Field(
         ...,
         min_length=1,
-        max_length=1000,
-        description="Question about uploaded documents",
+        max_length=5000,
+        description="Question about uploaded documents (supports detailed, structured prompts)",
         examples=["What are the key findings in the research paper?"],
     )
     collection: str = Field(

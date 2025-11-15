@@ -48,23 +48,18 @@ RERANK_DEFAULTS = {
 }
 
 
-async def get_sources(query: str, focus_mode):
-    """Fetch sources via SearxNG primary, SerperDev fallback - matching Perplexica."""
-    # Handle both string and enum focus modes for testing flexibility
-    if isinstance(focus_mode, str):
-        # Convert string to enum if needed
-        focus_mode_value = focus_mode
-        try:
-            focus_mode = FocusMode(focus_mode)
-        except ValueError:
-            focus_mode = FocusMode.webSearch
-    else:
-        focus_mode_value = (
-            focus_mode.value if hasattr(focus_mode, "value") else str(focus_mode)
-        )
-
+async def get_sources(
+    query: str,
+    focus_mode: FocusMode,
+    sub_query: dict = None,  # Simplified SubQuery as dict
+) -> List[Dict]:
+    """
+    Fetch sources via SearxNG (primary) with SerperDev (fallback), incorporating temporal logic.
+    """
+    focus_mode_value = (
+        focus_mode.value if hasattr(focus_mode, "value") else str(focus_mode)
+    )
     cfg = FOCUS_MODE_ENGINES.get(focus_mode, {"searchWeb": True, "engines": []})
-    # Always perform web search regardless of focusMode configuration
 
     logger.info(
         "Fetching sources",
@@ -72,34 +67,78 @@ async def get_sources(query: str, focus_mode):
             "query": query,
             "focus_mode": focus_mode_value,
             "engines": cfg["engines"],
+            "sub_query": sub_query,
         },
     )
 
-    # TEMPORARY: Skip SearxNG to test SerperDev directly
-    logger.info("TEMP: Skipping SearxNG, forcing SerperDev", extra={"query": query})
-    # try:
-    #     results = await searx_client.search(
-    #         query, engines=cfg["engines"], language="en"
-    #     )
-    #     if results:
-    #         logger.info(
-    #             "SearxNG search successful",
-    #             extra={"query": query, "result_count": len(results)},
-    #         )
-    #         return results
-    # except Exception as e:
-    #     logger.warning(
-    #         "SearxNG search failed",
-    #         extra={"query": query, "error": str(e)},
-    #     )
+    specific_year = sub_query.get("specific_year") if sub_query else None
+    temporal_scope = sub_query.get("temporal_scope") if sub_query else "any"
+    language = sub_query.get("language", "en") if sub_query else "en"
 
-    # Force SerperDev for comparison
+    # 1. Year-Specific Routing to SerperDev
+    if specific_year and serper_client.is_available():
+        logger.info(
+            "📅 Year-specific query detected → Routing to SerperDev",
+            extra={"query": query, "year": specific_year},
+        )
+        try:
+            serper_results = await serper_client.search(
+                query, specific_year=specific_year
+            )
+            if serper_results:
+                logger.info(
+                    "✅ SerperDev year-specific search successful",
+                    extra={"count": len(serper_results)},
+                )
+                return serper_results
+            logger.warning("SerperDev year-specific search returned 0 results.")
+        except Exception as e:
+            logger.error(
+                "SerperDev year-specific search failed, falling back to SearxNG",
+                extra={"error": str(e)},
+            )
+
+    # 2. Primary: SearxNG
+    try:
+        # Map temporal scope for SearxNG
+        time_range_map = {
+            "past_week": "week",
+            "past_month": "month",
+            "recent": "month",
+            "past_year": "year",
+        }
+        time_range = time_range_map.get(temporal_scope)
+
+        # Use more specific categories for better relevance
+        categories = "science,it,news,social media"
+
+        results = await searx_client.search(
+            query,
+            engines=cfg["engines"],
+            language=language,
+            time_range=time_range,
+            categories=categories,
+        )
+        if results:
+            logger.info(
+                "SearxNG search successful",
+                extra={"query": query, "result_count": len(results)},
+            )
+            return results
+        logger.warning("SearxNG returned 0 results, considering fallback.")
+    except Exception as e:
+        logger.warning(
+            "SearxNG search failed, proceeding to fallback",
+            extra={"query": query, "error": str(e)},
+        )
+
+    # 3. Fallback: SerperDev
     if serper_client.is_available():
         try:
-            logger.info("Falling back to SerperDev", extra={"query": query})
-            results = await serper_client.search(query)
+            logger.info("↩️ Falling back to SerperDev", extra={"query": query})
+            results = await serper_client.search(query, temporal_scope=temporal_scope)
             logger.info(
-                "SerperDev search successful",
+                "SerperDev fallback search successful",
                 extra={"query": query, "result_count": len(results)},
             )
             return results
