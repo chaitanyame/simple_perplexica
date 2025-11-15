@@ -148,12 +148,12 @@ class Settings(BaseSettings):
 
     # LLM Models (Legacy - kept for backward compatibility)
     LLM_MODEL: str = Field(
-        default="google/gemini-2.0-flash-exp:free",
-        description="Primary LLM model for synthesis (FREE)",
+        default="google/gemini-2.5-flash-lite",
+        description="Primary LLM model for synthesis (less rate limiting)",
     )
     PLANNING_MODEL: str = Field(
-        default="google/gemini-2.0-flash-exp:free",
-        description="LLM model for planning and decomposition (FREE)",
+        default="google/gemini-2.5-flash-lite",
+        description="LLM model for planning and decomposition (less rate limiting)",
     )
 
     # ========================================
@@ -163,8 +163,8 @@ class Settings(BaseSettings):
     # Research LLM (Primary, User-Facing)
     RESEARCH_LLM_PROVIDER: str = Field(default="openrouter", description="Research LLM provider")
     RESEARCH_LLM_MODEL: str = Field(
-        default="google/gemini-2.0-flash-exp:free",
-        description="Research LLM model (Gemini 2.0 Flash free with good reasoning)",
+        default="google/gemini-2.5-flash-lite",
+        description="Research LLM model (Gemini 2.5 Flash Lite - less rate limiting)",
     )
     RESEARCH_LLM_TEMPERATURE: float = Field(
         default=0.3, ge=0.0, le=2.0, description="Research LLM temperature"
@@ -176,11 +176,31 @@ class Settings(BaseSettings):
         default=180, ge=10, le=600, description="Research LLM timeout (R1 needs time for reasoning)"
     )
 
+    # Phase-Specific Token Limits (Optional - falls back to RESEARCH_LLM_MAX_TOKENS)
+    DECOMPOSITION_MAX_TOKENS: int | None = Field(
+        default=None,
+        ge=100,
+        le=4096,
+        description="Max tokens for query decomposition (falls back to RESEARCH_LLM_MAX_TOKENS if None)",
+    )
+    SYNTHESIS_MAX_TOKENS: int | None = Field(
+        default=None,
+        ge=1024,
+        le=32768,
+        description="Max tokens for answer synthesis (falls back to RESEARCH_LLM_MAX_TOKENS if None)",
+    )
+    REGENERATION_MAX_TOKENS: int | None = Field(
+        default=None,
+        ge=1024,
+        le=32768,
+        description="Max tokens for hallucination regeneration (falls back to RESEARCH_LLM_MAX_TOKENS if None)",
+    )
+
     # Fallback LLM (Secondary)
     FALLBACK_LLM_PROVIDER: str = Field(default="openrouter", description="Fallback LLM provider")
     FALLBACK_LLM_MODEL: str = Field(
-        default="google/gemini-2.0-flash-thinking-exp:free",
-        description="Fallback LLM model (Gemini free)",
+        default="google/gemini-2.5-flash-lite",
+        description="Fallback LLM model (Gemini 2.5 Lite - less rate limiting)",
     )
     FALLBACK_LLM_TEMPERATURE: float = Field(
         default=0.2, ge=0.0, le=2.0, description="Fallback LLM temperature"
@@ -206,6 +226,56 @@ class Settings(BaseSettings):
     )
     ENABLE_LLM_FALLBACK: bool = Field(
         default=True, description="Enable fallback to secondary LLM on primary failure"
+    )
+
+    # Two-Pass Synthesis Configuration
+    HALLUCINATION_THRESHOLD: float = Field(
+        default=0.1,
+        ge=0.0,
+        le=1.0,
+        description="Hallucination rate threshold to trigger regeneration (0.1 = 10%)",
+    )
+    MAX_REGENERATION_PASSES: int = Field(
+        default=3, ge=1, le=5, description="Maximum number of regeneration attempts"
+    )
+    MIN_IMPROVEMENT_THRESHOLD: int = Field(
+        default=1,
+        ge=0,
+        le=10,
+        description="Minimum hallucination reduction to accept regenerated answer",
+    )
+
+    # ========================================
+    # Source Authority Scoring Configuration
+    # ========================================
+    ENABLE_AUTHORITY_SCORING: bool = Field(
+        default=True,
+        description="Enable source authority scoring in ranking (pattern-based + Wikipedia)",
+    )
+    AUTHORITY_SCORING_WEIGHT: float = Field(
+        default=0.15,
+        ge=0.0,
+        le=0.5,
+        description="Weight of authority score in final ranking (0.15 = 15%)",
+    )
+    ENABLE_PATTERN_AUTHORITY: bool = Field(
+        default=True,
+        description="Enable pattern-based authority detection (*.gov, *.edu, docs.*, etc.)",
+    )
+    ENABLE_WIKIPEDIA_AUTHORITY: bool = Field(
+        default=True, description="Enable Wikipedia citation proxy for query-contextual authority"
+    )
+    WIKIPEDIA_CACHE_TTL: int = Field(
+        default=3600,
+        ge=300,
+        le=86400,
+        description="Wikipedia citation cache TTL in seconds (default: 1 hour)",
+    )
+    AUTHORITY_BOOST_MULTIPLIER: float = Field(
+        default=1.3,
+        ge=1.0,
+        le=2.0,
+        description="Score multiplier for authoritative sources (1.3 = 30% boost)",
     )
 
     # API Configuration

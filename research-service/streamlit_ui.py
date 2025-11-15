@@ -172,9 +172,8 @@ def main():
         model = st.selectbox(
             "Model",
             [
-                "google/gemini-2.0-flash-exp:free",
                 "google/gemini-2.5-flash-lite",
-                "deepseek/deepseek-chat",
+                "google/gemini-2.0-flash-lite-001",
             ],
             index=0,
         )

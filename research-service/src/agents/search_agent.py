@@ -283,6 +283,13 @@ class SearchAgent:
         self.timeout = deps.timeout
         self.temporal_validator = TemporalValidator()
 
+        # Initialize authority scorer
+        from src.utils.authority_scorer import AuthorityScorer
+
+        self.authority_scorer = (
+            AuthorityScorer(settings) if settings.ENABLE_AUTHORITY_SCORING else None
+        )
+
         # Log search configuration
         # SearxNG is now the primary search backend; SerperDev acts as a fallback when available
         if deps.serperdev_api_key and deps.serperdev_api_key.strip():
@@ -293,6 +300,15 @@ class SearchAgent:
             )
 
         logger.info(f"✅ Temporal validation enabled with post-retrieval filtering")
+
+        # Log authority scoring configuration
+        if self.authority_scorer:
+            logger.info(
+                "🏛️ Authority scoring enabled",
+                weight=settings.AUTHORITY_SCORING_WEIGHT,
+                pattern_based=settings.ENABLE_PATTERN_AUTHORITY,
+                wikipedia_proxy=settings.ENABLE_WIKIPEDIA_AUTHORITY,
+            )
 
     async def decompose_query(self, query: str) -> list[SubQuery]:
         """Decompose complex query into focused sub-queries using Pydantic AI.
@@ -466,13 +482,11 @@ Respond with valid JSON only."""
             logger.info(f"📤 System prompt length: {len(system_prompt)} chars")
             logger.info(f"📤 User message: '{messages[1]['content'][:200]}...'")
 
-            # Use DeepSeek Chat (free, no moderation issues) via OpenRouter
+            # Use configured research model (Gemini) via OpenRouter
             # Note: OpenRouterClient is initialized with a default model,
             # but we can override by temporarily changing it
             original_model = self.deps.llm_client.model
-            self.deps.llm_client.model = (
-                "deepseek/deepseek-chat"  # FREE tier, no content moderation
-            )
+            self.deps.llm_client.model = settings.RESEARCH_LLM_MODEL
 
             response = await self.deps.llm_client.chat(
                 messages=messages,
@@ -1247,7 +1261,7 @@ Respond with valid JSON only."""
                     filtered[idx].semantic_score = score
 
                     # Compute final score as weighted combination
-                    # final_score = (1 - w) * relevance + w * semantic_score
+                    # final_score = (1 - w) * relevance + w * semantic_score + authority_weight * authority
                     relevance_weight = 1.0 - self.deps.rerank_weight
                     filtered[idx].final_score = (
                         relevance_weight * filtered[idx].relevance + self.deps.rerank_weight * score
@@ -1257,6 +1271,34 @@ Respond with valid JSON only."""
                     "Semantic reranking complete",
                     reranked_count=len(rerank_results),
                 )
+
+                # Apply authority scoring boost if enabled
+                if self.authority_scorer:
+                    logger.info(
+                        "🏛️ Applying authority scoring to reranked sources",
+                        num_sources=len(filtered),
+                    )
+                    for source in filtered:
+                        authority_score = await self.authority_scorer.calculate_authority_score(
+                            source, original_query
+                        )
+                        if authority_score > 0:
+                            # Apply authority boost to final_score
+                            boost = authority_score * settings.AUTHORITY_SCORING_WEIGHT
+                            old_score = source.final_score
+                            source.final_score = min(
+                                1.0,
+                                source.final_score
+                                * (1 + boost * settings.AUTHORITY_BOOST_MULTIPLIER),
+                            )
+                            logger.debug(
+                                "Authority boost applied",
+                                url=source.url,
+                                authority_score=authority_score,
+                                boost=boost,
+                                old_final=old_score,
+                                new_final=source.final_score,
+                            )
 
             except Exception as e:
                 logger.warning(
@@ -1270,6 +1312,32 @@ Respond with valid JSON only."""
             # No reranking: use relevance as final_score
             for source in filtered:
                 source.final_score = source.relevance
+
+        # Apply authority scoring if enabled (for both reranked and non-reranked sources)
+        if self.authority_scorer and not self.deps.enable_reranking:
+            logger.info(
+                "🏛️ Applying authority scoring (no reranking enabled)",
+                num_sources=len(filtered),
+            )
+            for source in filtered:
+                authority_score = await self.authority_scorer.calculate_authority_score(
+                    source, original_query
+                )
+                if authority_score > 0:
+                    # Apply authority boost to final_score
+                    boost = authority_score * settings.AUTHORITY_SCORING_WEIGHT
+                    old_score = source.final_score
+                    source.final_score = min(
+                        1.0, source.final_score * (1 + boost * settings.AUTHORITY_BOOST_MULTIPLIER)
+                    )
+                    logger.debug(
+                        "Authority boost applied",
+                        url=source.url,
+                        authority_score=authority_score,
+                        boost=boost,
+                        old_final=old_score,
+                        new_final=source.final_score,
+                    )
 
         # Sort by final_score (descending)
         filtered.sort(key=lambda s: s.final_score, reverse=True)
@@ -2467,10 +2535,20 @@ Write a detailed answer with full explanations for everything:"""
                             grounding_result.claims
                         )
 
-                        # Threshold for regeneration: 20% hallucination rate
-                        if hallucination_rate > 0.2:
+                        # Get configurable threshold from settings (default: 10%)
+                        from src.core.config import settings
+
+                        hallucination_threshold = settings.HALLUCINATION_THRESHOLD
+
+                        logger.info(
+                            f"📊 Hallucination Detection: {hallucination_rate:.1%} rate "
+                            f"(threshold: {hallucination_threshold:.1%})"
+                        )
+
+                        # Trigger regeneration if above threshold
+                        if hallucination_rate > hallucination_threshold:
                             logger.warning(
-                                f"⚠️ High hallucination rate detected: {hallucination_rate:.1%} - TRIGGERING REGENERATION"
+                                f"⚠️ High hallucination rate detected: {hallucination_rate:.1%} > {hallucination_threshold:.1%} - TRIGGERING REGENERATION"
                             )
 
                             # Identify hallucinated claims for correction
@@ -2569,7 +2647,7 @@ Generate the corrected answer:"""
                                 logger.info("Continuing with original answer")
                         else:
                             logger.info(
-                                f"✓ Hallucination rate within acceptable range: {hallucination_rate:.1%}"
+                                f"✓ Hallucination rate within acceptable range: {hallucination_rate:.1%} <= {hallucination_threshold:.1%}"
                             )
 
                     # ========== PHASE 3 TASK 1: CITATION QUALITY VERIFICATION ==========

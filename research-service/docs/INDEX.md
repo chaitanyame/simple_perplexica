@@ -8,14 +8,27 @@ Complete documentation for the Research Service API and implementation.
 
 ```
 docs/
-├── INDEX.md                    # This file - documentation index
-├── api/                        # API documentation
-│   ├── README_API.md          # API documentation overview
-│   ├── API_SPECIFICATION.md   # Complete API reference
-│   ├── API_QUICK_REFERENCE.md # Quick lookup guide
-│   ├── TESTING_GUIDE.md       # Testing procedures
-│   └── openapi.yaml           # OpenAPI 3.0 specification
-└── ...                        # Other documentation to come
+├── INDEX.md                           # This file - documentation index
+├── api/                               # API documentation
+│   ├── README_API.md                  # API documentation overview
+│   ├── API_SPECIFICATION.md           # Complete API reference
+│   ├── API_QUICK_REFERENCE.md         # Quick lookup guide
+│   ├── TESTING_GUIDE.md               # Testing procedures
+│   └── openapi.yaml                   # OpenAPI 3.0 specification
+├── PROCESS_FLOWS.md                   # Agent workflows and pipelines
+├── STREAMLIT_APP_SPEC.md              # Streamlit UI specification
+├── STREAMLIT_ARCHITECTURE.md          # UI architecture details
+├── DEVELOPMENT_STANDARDS.md           # Coding standards and practices
+├── COMPREHENSIVE_LOGGING.md           # Logging implementation guide
+├── LIBRARY_VERSIONS.md                # Dependency versions
+├── TEST_COVERAGE_SUMMARY.md           # Test coverage metrics
+├── DIVERSITY_ENABLED_SUMMARY.md       # Diversity scoring feature
+├── QUERY_EXPANSION_SUMMARY.md         # Query expansion implementation
+├── TWO_PASS_SYNTHESIS_IMPLEMENTATION.md # Two-pass synthesis feature
+├── TEST_EXECUTION_SUMMARY.md          # Test execution results
+├── SEARCH_ACCURACY_ANALYSIS.md        # Search accuracy metrics
+├── NO_API_CALLS_FIX.md                # API call prevention guide
+└── CODEBASE_CLEANUP.md                # Project organization guide
 ```
 
 ---
@@ -42,13 +55,48 @@ Located in `docs/api/`
 
 ## 📋 Documentation Files
 
-| File | Size | Purpose |
-|------|------|---------|
-| API_SPECIFICATION.md | 19 KB | Complete API reference with all endpoints, schemas, and examples |
-| API_QUICK_REFERENCE.md | 12 KB | Quick lookup guide with common patterns and commands |
-| TESTING_GUIDE.md | 17 KB | Test procedures with 20+ test cases and validation steps |
-| README_API.md | 9 KB | Overview, navigation guide, and getting started steps |
-| openapi.yaml | 19 KB | Machine-readable OpenAPI 3.0 specification |
+### API Documentation
+| File | Purpose |
+|------|---------|
+| API_SPECIFICATION.md | Complete API reference with all endpoints, schemas, and examples |
+| API_QUICK_REFERENCE.md | Quick lookup guide with common patterns and commands |
+| TESTING_GUIDE.md | Test procedures with 20+ test cases and validation steps |
+| README_API.md | Overview, navigation guide, and getting started steps |
+| openapi.yaml | Machine-readable OpenAPI 3.0 specification |
+
+### Architecture & Design
+| File | Purpose |
+|------|---------|
+| PROCESS_FLOWS.md | Agent workflows, pipelines, and data flow diagrams |
+| STREAMLIT_APP_SPEC.md | Streamlit UI components and specifications |
+| STREAMLIT_ARCHITECTURE.md | UI architecture and component interaction |
+
+### Development & Standards
+| File | Purpose |
+|------|---------|
+| DEVELOPMENT_STANDARDS.md | Coding standards, TDD practices, and guidelines |
+| COMPREHENSIVE_LOGGING.md | Logging implementation and best practices |
+| LIBRARY_VERSIONS.md | Technology stack and dependency versions |
+
+### Features & Implementation
+| File | Purpose |
+|------|---------|
+| DIVERSITY_ENABLED_SUMMARY.md | Source diversity scoring feature documentation |
+| QUERY_EXPANSION_SUMMARY.md | Query expansion implementation details |
+| TWO_PASS_SYNTHESIS_IMPLEMENTATION.md | Two-pass synthesis with hallucination correction |
+
+### Testing & Quality
+| File | Purpose |
+|------|---------|
+| TEST_EXECUTION_SUMMARY.md | Test suite execution results and metrics |
+| TEST_COVERAGE_SUMMARY.md | Code coverage analysis and reports |
+| SEARCH_ACCURACY_ANALYSIS.md | Search accuracy benchmarks and analysis |
+
+### Maintenance & Operations
+| File | Purpose |
+|------|---------|
+| NO_API_CALLS_FIX.md | Guide to preventing unwanted API calls in tests |
+| CODEBASE_CLEANUP.md | Project organization and cleanup documentation |
 
 ---
 

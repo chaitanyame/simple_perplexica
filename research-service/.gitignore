@@ -39,6 +39,7 @@ ENV/
 htmlcov/
 .tox/
 .hypothesis/
+test_results/
 
 # Environment variables
 .env

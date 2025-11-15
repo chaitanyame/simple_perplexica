@@ -27,17 +27,48 @@ def is_available() -> bool:
     before_sleep=before_sleep_log(logger, logging.WARNING),
 )
 async def search(query: str) -> List[Dict]:
-    """Search via SerperDev with retry logic for transient failures."""
+    """Search via SerperDev with retry logic for transient failures.
+
+    Sends a JSON body aligned with Serper.dev requirements:
+    {"q": str, "gl": str, "hl": str, "num": int}
+    """
     if not SERPERDEV_API_KEY:
         logger.error("SerperDev API key not configured")
         raise RuntimeError("SERPERDEV_API_KEY not configured")
 
+    q = (query or "").strip()
+    if not q:
+        logger.warning("Empty query passed to SerperDev; returning empty result set")
+        return []
+
     headers = {"X-API-KEY": SERPERDEV_API_KEY, "Content-Type": "application/json"}
+
+    # Conservative, widely accepted defaults
+    payload = {"q": q, "gl": "us", "hl": "en", "num": 10}
 
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            r = await client.post(SERPERDEV_URL, json={"q": query}, headers=headers)
-            r.raise_for_status()
+            r = await client.post(SERPERDEV_URL, json=payload, headers=headers)
+            try:
+                r.raise_for_status()
+            except httpx.HTTPStatusError as _:
+                # Log full response body for 4xx diagnostics
+                body = None
+                try:
+                    body = r.json()
+                except Exception:
+                    body = r.text
+                logger.error(
+                    "SerperDev HTTP status error",
+                    extra={
+                        "status": r.status_code,
+                        "body": body,
+                        "url": SERPERDEV_URL,
+                        "payload": payload,
+                    },
+                    exc_info=True,
+                )
+                raise
             data = r.json()
             results = []
             for item in data.get("organic", []):
@@ -50,20 +81,20 @@ async def search(query: str) -> List[Dict]:
                 )
             logger.info(
                 "SerperDev search completed",
-                extra={"query": query, "result_count": len(results)},
+                extra={"query": q, "result_count": len(results)},
             )
             return results
     except httpx.HTTPError as e:
         logger.error(
             "SerperDev HTTP error",
-            extra={"query": query, "error": str(e), "url": SERPERDEV_URL},
+            extra={"query": q, "error": str(e), "url": SERPERDEV_URL},
             exc_info=True,
         )
         raise
     except Exception as e:
         logger.error(
             "SerperDev search failed",
-            extra={"query": query, "error": str(e)},
+            extra={"query": q, "error": str(e)},
             exc_info=True,
         )
         raise

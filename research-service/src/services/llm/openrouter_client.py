@@ -69,7 +69,7 @@ class OpenRouterClient:
         self,
         api_key: str | None = None,
         base_url: str = "https://openrouter.ai/api/v1",
-        model: str = "google/gemini-2.0-flash-exp:free",
+        model: str | None = None,  # Model comes from settings, not hardcoded
         max_retries: int = 10,
         max_delay: float = 300.0,
         exponential_base: float = 2.0,
@@ -98,7 +98,8 @@ class OpenRouterClient:
             )
 
         self.base_url = base_url
-        self.model = model
+        # Load model from settings if not provided
+        self.model = model if model is not None else settings.RESEARCH_LLM_MODEL
         self.max_retries = max_retries
         self.max_delay = max_delay
         self.exponential_base = exponential_base
@@ -138,8 +139,7 @@ class OpenRouterClient:
             LLMClientError: If request fails after all retries
         """
         logger.info(
-            f"LLM request: model={self.model}, messages={len(messages)}, "
-            f"stream={stream}, temperature={temperature}"
+            f"🤖 LLM REQUEST START: model={self.model}, temp={temperature}, max_tokens={max_tokens}, messages={len(messages)}"
         )
 
         if stream:
@@ -180,6 +180,10 @@ class OpenRouterClient:
                 "model": response.model,  # type: ignore[union-attr]
                 "finish_reason": response.choices[0].finish_reason,  # type: ignore[union-attr]
             }
+            logger.info(
+                f"✅ LLM RESPONSE SUCCESS: tokens={result['usage']['total_tokens']} "
+                f"(input={result['usage']['prompt_tokens']}, output={result['usage']['completion_tokens']})"
+            )
 
             # Track generation if tracer available
             if self.tracer:
@@ -302,28 +306,37 @@ class OpenRouterClient:
         for attempt in range(self.max_retries + 1):
             try:
                 return await fn()
-            
+
             # IMPORTANT: Handle specific exceptions BEFORE general APIError
             # RateLimitError and APITimeoutError are subclasses of APIError
             except RateLimitError as e:
                 last_error = e
-                # After 2 rate limit retries, switch to fallback model
-                if attempt >= 2 and self.model != "google/gemini-2.0-flash-exp:free":
+                logger.error(
+                    f"⚠️ RATE LIMIT ERROR: model={self.model}, attempt={attempt + 1}/{self.max_retries + 1}"
+                )
+                # After 2 rate limit retries, switch to fallback model from settings
+                from src.core.config import settings
+
+                fallback_model = settings.FALLBACK_LLM_MODEL
+
+                if attempt >= 2 and self.model != fallback_model:
                     logger.warning(
-                        f"🔄 RATE LIMIT FALLBACK: Switching from {self.model} to google/gemini-2.0-flash-exp:free after {attempt + 1} attempts"
+                        f"🔄 FALLBACK: Switching model: {self.model} -> {fallback_model}"
                     )
                     original_model = self.model
-                    self.model = "google/gemini-2.0-flash-exp:free"
+                    self.model = fallback_model
                     try:
                         result = await fn()
                         logger.info(
-                            f"✅ FALLBACK SUCCESS: google/gemini-2.0-flash-exp:free worked, restoring {original_model}"
+                            f"✅ FALLBACK SUCCESS: {fallback_model} worked, restoring {original_model}"
                         )
                         self.model = original_model
                         return result
                     except Exception as fallback_error:
                         self.model = original_model
-                        logger.error(f"❌ Fallback model also failed: {fallback_error}")
+                        logger.error(
+                            f"❌ FALLBACK FAILED: {fallback_model} also failed, error={str(fallback_error)[:200]}"
+                        )
                         # Continue with normal retry logic
 
                 if attempt < self.max_retries:
@@ -339,9 +352,12 @@ class OpenRouterClient:
 
             except APITimeoutError as e:
                 last_error = e
+                logger.error(
+                    f"⏱️ TIMEOUT ERROR: model={self.model}, timeout={self.timeout}s, attempt={attempt + 1}/{self.max_retries + 1}"
+                )
                 if attempt < self.max_retries:
                     logger.warning(
-                        f"Timeout on attempt {attempt + 1}/{self.max_retries}, retrying..."
+                        f"🔄 RETRY: attempt {attempt + 1}/{self.max_retries}, backing off..."
                     )
                     await self._sleep_with_backoff(delay, attempt)
                     delay = min(delay * self.exponential_base, self.max_delay)
